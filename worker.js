@@ -25,6 +25,8 @@ const MIN_RATE = 5;
 const MAX_RATE = 15;
 const MAX_PAGES = 8; // 안전장치: 페이지당 50종목 기준 최대 400종목까지만 스캔
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 // ---------- 네이버 상승률 페이지 파싱 ----------
 async function fetchRiseList(sosok) {
   // sosok=0: KOSPI, sosok=1: KOSDAQ
@@ -32,6 +34,8 @@ async function fetchRiseList(sosok) {
   const results = [];
 
   for (let page = 1; page <= MAX_PAGES; page++) {
+    if (page > 1) await sleep(250); // 연속 요청 사이 딜레이
+
     const url = `https://finance.naver.com/sise/sise_rise.naver?sosok=${sosok}&page=${page}`;
     const res = await fetch(url, { headers: HEADERS });
     if (!res.ok) break;
@@ -94,10 +98,9 @@ async function collectAndStore(env) {
   const now = new Date();
   const capturedAt = now.toISOString();
 
-  const [kospi, kosdaq] = await Promise.all([
-    fetchRiseList(0),
-    fetchRiseList(1),
-  ]);
+  const kospi = await fetchRiseList(0);
+  await sleep(250);
+  const kosdaq = await fetchRiseList(1);
   const all = [...kospi, ...kosdaq];
   if (all.length === 0) return { saved: 0 };
 
@@ -187,7 +190,7 @@ function renderDashboard() {
   <div class="sub" id="ts">불러오는 중...</div>
 
   <div class="board">
-    <h2>10분 전보다 더 오른 TOP5</h2>
+    <h2>5분 전보다 더 오른 TOP5</h2>
     <table id="top5"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
   </div>
 
@@ -232,7 +235,7 @@ async function load() {
 }
 
 load();
-setInterval(load, 60000); // 1분마다 화면 갱신 (저장 자체는 cron이 10분마다)
+setInterval(load, 60000); // 1분마다 화면 갱신 (저장 자체는 cron이 5분마다)
 </script>
 </body>
 </html>`;
