@@ -1,19 +1,3 @@
-/**
- * 네이버 상승률 5~15% 종목 스크리너
- * - cron으로 10분마다 KOSPI/KOSDAQ 상승률 페이지를 읽어서 5~15% 구간 종목을 D1에 저장
- * - / 로 접속하면 대시보드 표시 (최상단: 직전 스냅샷보다 더 오른 TOP5)
- *
- * 배포 방법 (Wrangler 없이 대시보드로):
- * 1. Cloudflare 대시보드 > Workers & Pages > Create Worker
- * 2. 코드 편집기에 이 파일 전체 붙여넣기
- * 3. Settings > Bindings > D1 Database 추가, Variable name: DB, 연결할 DB 선택
- *    (schema.sql을 그 DB에 먼저 실행해둘 것)
- * 4. Settings > Trigger > Cron Trigger 추가: 매 10분 (아래 CRON 참고)
- *
- * 추천 Cron 표현식 (UTC 기준, 평일 09:00~15:59 KST 커버):
- *   매 10분마다 0-6시, 평일 (wrangler.toml [triggers] 참고)
- * (코드 안에서 09:00~15:30 KST가 아니면 스킵하므로 여유 있게 잡아도 됨)
- */
 
 const HEADERS = {
   "User-Agent":
