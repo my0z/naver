@@ -256,9 +256,6 @@ function renderDashboard() {
 function fmt(n){ return Number(n).toLocaleString(); }
 
 // ---------- 종목 클릭 모달 ----------
-const KIWOOM_APPSTORE = 'https://apps.apple.com/kr/app/id1570370057';
-const KIWOOM_ANDROID_PACKAGE = 'com.kiwoom.heromts';
-
 const modalOverlay = document.getElementById('modalOverlay');
 const modalName = document.getElementById('modalName');
 const modalPrice = document.getElementById('modalPrice');
@@ -288,21 +285,31 @@ modalOverlay.addEventListener('click', (e) => {
 });
 
 function buyWithKiwoom(code, name) {
-  // 종목코드 클립보드 복사 (키움 앱 자체 딥링크는 공식 스킴이 없어 검색창에 붙여넣는 방식으로 대체)
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(code).catch(() => {});
+  if (!confirm(name + ' (' + code + ') 시장가 매수 주문을 넣을까요?\\n(모의투자/실전 여부는 서버 설정값을 따릅니다)')) {
+    return;
   }
-  const ua = navigator.userAgent;
-  if (/Android/i.test(ua)) {
-    // 안드로이드: 패키지로 앱 실행 시도 (특정 종목 화면까지는 이동 불가, 앱만 켜짐)
-    window.location.href = 'intent://#Intent;package=' + KIWOOM_ANDROID_PACKAGE + ';end';
-  } else {
-    // iOS: 공식 커스텀 스킴 미확인 → 앱스토어로 유도 (이미 설치돼 있으면 보통 시스템이 앱으로 전환)
-    window.location.href = KIWOOM_APPSTORE;
-  }
-  setTimeout(() => {
-    alert(name + '(' + code + ') 종목코드가 복사되었습니다.\\n키움 앱 검색창에 붙여넣기 해주세요.');
-  }, 300);
+  modalBuyBtn.disabled = true;
+  modalBuyBtn.textContent = '주문 처리 중...';
+
+  fetch('/api/buy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code })
+  })
+    .then(res => res.json())
+    .then(data => {
+      const env = data.mock ? '[모의투자]' : '[실전]';
+      if (data.ok) {
+        alert(env + ' ' + name + ' ' + data.qty + '주 매수 주문 완료\\n주문번호: ' + (data.raw?.ord_no || '-'));
+      } else {
+        alert(env + ' 주문 실패: ' + (data.raw?.return_msg || data.error || '알 수 없는 오류'));
+      }
+    })
+    .catch(err => alert('주문 요청 중 오류: ' + err.message))
+    .finally(() => {
+      modalBuyBtn.disabled = false;
+      modalBuyBtn.textContent = '🛒 키움증권으로 매수';
+    });
 }
 
 async function load() {
@@ -354,6 +361,58 @@ setInterval(load, 60000); // 1분마다 화면 갱신 (저장 자체는 cron이 
 </html>`;
 }
 
+// ---------- 키움 REST API: 원클릭 매수 ----------
+function kiwoomHost(env) {
+  return env.KIWOOM_MOCK === "false"
+    ? "https://api.kiwoom.com"
+    : "https://mockapi.kiwoom.com"; // 기본값: 모의투자
+}
+
+async function kiwoomIssueToken(env) {
+  const res = await fetch(`${kiwoomHost(env)}/oauth2/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json;charset=UTF-8" },
+    body: JSON.stringify({
+      grant_type: "client_credentials",
+      appkey: env.KIWOOM_APP_KEY,
+      secretkey: env.KIWOOM_APP_SECRET,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.token) {
+    throw new Error(`토큰 발급 실패: ${JSON.stringify(data)}`);
+  }
+  return data.token;
+}
+
+async function kiwoomBuyOrder(env, code) {
+  if (!env.KIWOOM_APP_KEY || !env.KIWOOM_APP_SECRET) {
+    throw new Error("KIWOOM_APP_KEY / KIWOOM_APP_SECRET 시크릿이 설정되지 않았습니다.");
+  }
+  const qty = parseInt(env.KIWOOM_BUY_QTY || "1", 10);
+  const token = await kiwoomIssueToken(env);
+
+  const res = await fetch(`${kiwoomHost(env)}/api/dostk/ordr`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json;charset=UTF-8",
+      authorization: `Bearer ${token}`,
+      "cont-yn": "N",
+      "next-key": "",
+      "api-id": "kt10000", // 주식 매수주문
+    },
+    body: JSON.stringify({
+      dmst_stex_tp: "KRX",
+      stk_cd: code,
+      ord_qty: String(qty),
+      ord_uv: "0", // 시장가는 주문단가 0
+      trde_tp: "3", // 3: 시장가
+    }),
+  });
+  const data = await res.json();
+  return { ok: res.ok && data.return_code === 0, qty, mock: env.KIWOOM_MOCK !== "false", raw: data };
+}
+
 // ---------- 엔트리포인트 ----------
 export default {
   async fetch(request, env) {
@@ -362,6 +421,17 @@ export default {
     if (url.pathname === "/api/latest") {
       const data = await getLatest(env);
       return Response.json(data);
+    }
+
+    if (url.pathname === "/api/buy" && request.method === "POST") {
+      try {
+        const { code } = await request.json();
+        if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
+        const result = await kiwoomBuyOrder(env, code);
+        return Response.json(result);
+      } catch (e) {
+        return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+      }
     }
 
     if (url.pathname === "/api/run-now") {
