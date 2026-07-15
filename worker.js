@@ -103,7 +103,7 @@ function isMarketHoursKST(date) {
   const day = kst.getDay(); // 0=Sun
   if (day === 0 || day === 6) return false;
   const minutes = kst.getHours() * 60 + kst.getMinutes();
-  return minutes >= 9 * 60 && minutes <= 15 * 60 + 15; // 09:00 ~ 15:15
+  return minutes >= 9 * 60 + 1 && minutes <= 15 * 60 + 15; // 09:01 ~ 15:15
 }
 
 // ---------- Cron: 저장 ----------
@@ -141,13 +141,41 @@ async function purgeOldRows(env) {
   return result.meta?.changes ?? 0;
 }
 
-// ---------- API: 최신 스냅샷 + 상승 TOP5 ----------
+// N번 연속 상승 종목 계산 (times[0]이 최신). requiredUps번의 구간이 전부 상승이어야 함
+function computeStreak(times, snapByTime, requiredUps) {
+  if (times.length < requiredUps + 1) return [];
+  const result = [];
+  for (const code of snapByTime[times[0]].keys()) {
+    const rows = [];
+    let ok = true;
+    for (let i = 0; i <= requiredUps; i++) {
+      const row = snapByTime[times[i]]?.get(code);
+      if (!row) { ok = false; break; }
+      rows.push(row);
+    }
+    if (!ok) continue;
+
+    let allUp = true;
+    for (let i = 0; i < requiredUps; i++) {
+      if (rows[i].change_rate <= rows[i + 1].change_rate) { allUp = false; break; }
+    }
+    if (allUp) {
+      result.push({ ...rows[0], totalGain: rows[0].change_rate - rows[requiredUps].change_rate });
+    }
+  }
+  result.sort((a, b) => b.totalGain - a.totalGain);
+  return result;
+}
+
+// ---------- API: 최신 스냅샷 + 상승 TOP5 + 3/5연속 상승 ----------
 async function getLatest(env) {
   const timesRes = await env.DB.prepare(
-    `SELECT DISTINCT captured_at FROM snapshots ORDER BY captured_at DESC LIMIT 2`
+    `SELECT DISTINCT captured_at FROM snapshots ORDER BY captured_at DESC LIMIT 6`
   ).all();
   const times = timesRes.results.map((r) => r.captured_at);
-  if (times.length === 0) return { latest: [], risingTop5: [], capturedAt: null };
+  if (times.length === 0) {
+    return { latest: [], risingTop5: [], streak3: [], streak5: [], capturedAt: null };
+  }
 
   const latestRes = await env.DB.prepare(
     `SELECT * FROM snapshots WHERE captured_at = ? ORDER BY change_rate DESC`
@@ -173,7 +201,21 @@ async function getLatest(env) {
       .slice(0, 5);
   }
 
-  return { latest, risingTop5, capturedAt: times[0] };
+  // 3연속/5연속 상승 계산에 필요한 스냅샷을 한 번에 로드
+  const snapByTime = {};
+  for (const t of times) {
+    const r = await env.DB.prepare(
+      `SELECT code, name, price, change_rate, volume FROM snapshots WHERE captured_at = ?`
+    )
+      .bind(t)
+      .all();
+    snapByTime[t] = new Map(r.results.map((row) => [row.code, row]));
+  }
+
+  const streak3 = computeStreak(times, snapByTime, 3);
+  const streak5 = computeStreak(times, snapByTime, 5);
+
+  return { latest, risingTop5, streak3, streak5, capturedAt: times[0] };
 }
 
 // ---------- 대시보드 HTML ----------
@@ -221,12 +263,26 @@ function renderDashboard() {
   .modalBtn.chart { background:#2a2a2a; color:#eee; }
   .modalBtn.price { background:#2a2a2a; color:#eee; }
   .modalBtn.buy { background:#ff6b6b; color:#111; }
+  .modalBtn.sell { background:#4d9fff; color:#111; }
   .modalBtn.cancel { background:transparent; color:#888; margin-bottom:0; padding:10px; }
+  .streakBoard h2 { color:#ffd43b; }
+  .streakBoard.streak5 h2 { color:#69db7c; }
+  .streakBadge { color:#ffd43b; font-size:11px; margin-left:6px; }
 </style>
 </head>
 <body>
   <h1>🔥 급등주 스크리너</h1>
   <div class="sub" id="ts">불러오는 중...</div>
+
+  <div class="board streakBoard streak5">
+    <h2>🚀 5연속 상승 종목</h2>
+    <table id="streak5"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
+  </div>
+
+  <div class="board streakBoard">
+    <h2>⚡ 3연속 상승 종목</h2>
+    <table id="streak3"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
+  </div>
 
   <div class="board">
     <h2>5분 전보다 더 오른 TOP5</h2>
@@ -245,9 +301,10 @@ function renderDashboard() {
     <div id="modalBox">
       <h3 id="modalName">-</h3>
       <div class="modalSub"><span id="modalPrice">-</span><span class="up" id="modalRate">-</span></div>
-      <a class="modalBtn chart" id="modalChartLink" target="_blank" rel="noopener">📈 차트 보기</a>
+      <a class="modalBtn chart" id="modalChartLink" target="_blank" rel="noopener">📊 종목 보기 (차트)</a>
       <a class="modalBtn price" id="modalPriceLink" target="_blank" rel="noopener">💰 현재가·호가 보기</a>
-      <button class="modalBtn buy" id="modalBuyBtn">🛒 키움증권으로 매수</button>
+      <button class="modalBtn buy" id="modalBuyBtn">🛒 매수</button>
+      <button class="modalBtn sell" id="modalSellBtn">💸 매도</button>
       <button class="modalBtn cancel" id="modalCancelBtn">닫기</button>
     </div>
   </div>
@@ -263,6 +320,7 @@ const modalRate = document.getElementById('modalRate');
 const modalChartLink = document.getElementById('modalChartLink');
 const modalPriceLink = document.getElementById('modalPriceLink');
 const modalBuyBtn = document.getElementById('modalBuyBtn');
+const modalSellBtn = document.getElementById('modalSellBtn');
 const modalCancelBtn = document.getElementById('modalCancelBtn');
 
 function openStockModal(item) {
@@ -271,7 +329,8 @@ function openStockModal(item) {
   modalRate.textContent = '+' + Number(item.rate).toFixed(2) + '%';
   modalChartLink.href = 'https://m.stock.naver.com/domestic/stock/' + item.code + '/total';
   modalPriceLink.href = 'https://finance.naver.com/item/main.naver?code=' + item.code;
-  modalBuyBtn.onclick = () => buyWithKiwoom(item.code, item.name);
+  modalBuyBtn.onclick = () => tradeWithKiwoom('buy', item.code, item.name);
+  modalSellBtn.onclick = () => tradeWithKiwoom('sell', item.code, item.name);
   modalOverlay.classList.add('open');
 }
 
@@ -284,14 +343,18 @@ modalOverlay.addEventListener('click', (e) => {
   if (e.target === modalOverlay) closeStockModal();
 });
 
-function buyWithKiwoom(code, name) {
-  if (!confirm(name + ' (' + code + ') 시장가 매수 주문을 넣을까요?\\n(모의투자/실전 여부는 서버 설정값을 따릅니다)')) {
+function tradeWithKiwoom(side, code, name) {
+  const label = side === 'buy' ? '매수' : '매도';
+  const btn = side === 'buy' ? modalBuyBtn : modalSellBtn;
+  const btnDefaultText = side === 'buy' ? '🛒 매수' : '💸 매도';
+
+  if (!confirm(name + ' (' + code + ') 시장가 ' + label + ' 주문을 넣을까요?\\n(모의투자/실전 여부는 서버 설정값을 따릅니다)')) {
     return;
   }
-  modalBuyBtn.disabled = true;
-  modalBuyBtn.textContent = '주문 처리 중...';
+  btn.disabled = true;
+  btn.textContent = '주문 처리 중...';
 
-  fetch('/api/buy', {
+  fetch('/api/' + side, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code })
@@ -300,15 +363,15 @@ function buyWithKiwoom(code, name) {
     .then(data => {
       const env = data.mock ? '[모의투자]' : '[실전]';
       if (data.ok) {
-        alert(env + ' ' + name + ' ' + data.qty + '주 매수 주문 완료\\n주문번호: ' + (data.raw?.ord_no || '-'));
+        alert(env + ' ' + name + ' ' + data.qty + '주 ' + label + ' 주문 완료\\n주문번호: ' + (data.raw?.ord_no || '-'));
       } else {
         alert(env + ' 주문 실패: ' + (data.raw?.return_msg || data.error || '알 수 없는 오류'));
       }
     })
     .catch(err => alert('주문 요청 중 오류: ' + err.message))
     .finally(() => {
-      modalBuyBtn.disabled = false;
-      modalBuyBtn.textContent = '🛒 키움증권으로 매수';
+      btn.disabled = false;
+      btn.textContent = btnDefaultText;
     });
 }
 
@@ -319,6 +382,26 @@ async function load() {
   document.getElementById('ts').textContent = data.capturedAt
     ? '기준 시각: ' + new Date(data.capturedAt).toLocaleString('ko-KR')
     : '아직 저장된 데이터가 없습니다';
+
+  const streak5Body = document.querySelector('#streak5 tbody');
+  streak5Body.innerHTML = data.streak5.length
+    ? data.streak5.map(r => \`<tr class="clickable" data-code="\${r.code}">
+        <td>\${r.name}</td>
+        <td>\${fmt(r.price)}</td>
+        <td class="up">+\${r.change_rate.toFixed(2)}%</td>
+        <td class="delta">5연속<span class="streakBadge">▲\${r.totalGain.toFixed(2)}%p</span></td>
+      </tr>\`).join('')
+    : '<tr><td class="empty">5연속 상승 종목 없음</td></tr>';
+
+  const streak3Body = document.querySelector('#streak3 tbody');
+  streak3Body.innerHTML = data.streak3.length
+    ? data.streak3.map(r => \`<tr class="clickable" data-code="\${r.code}">
+        <td>\${r.name}</td>
+        <td>\${fmt(r.price)}</td>
+        <td class="up">+\${r.change_rate.toFixed(2)}%</td>
+        <td class="delta">3연속<span class="streakBadge">▲\${r.totalGain.toFixed(2)}%p</span></td>
+      </tr>\`).join('')
+    : '<tr><td class="empty">3연속 상승 종목 없음</td></tr>';
 
   const top5Body = document.querySelector('#top5 tbody');
   top5Body.innerHTML = data.risingTop5.length
@@ -340,9 +423,9 @@ async function load() {
       </tr>\`).join('')
     : '<tr><td class="empty">데이터 없음</td></tr>';
 
-  // 클릭용 종목 정보 매핑 (top5 + all 합쳐서)
+  // 클릭용 종목 정보 매핑 (streak5 + streak3 + top5 + all 합쳐서)
   const byCode = {};
-  [...data.risingTop5, ...data.latest].forEach(r => {
+  [...data.streak5, ...data.streak3, ...data.risingTop5, ...data.latest].forEach(r => {
     byCode[r.code] = { code: r.code, name: r.name, price: r.price, rate: r.change_rate };
   });
 
@@ -413,6 +496,34 @@ async function kiwoomBuyOrder(env, code) {
   return { ok: res.ok && data.return_code === 0, qty, mock: env.KIWOOM_MOCK !== "false", raw: data };
 }
 
+async function kiwoomSellOrder(env, code) {
+  if (!env.KIWOOM_APP_KEY || !env.KIWOOM_APP_SECRET) {
+    throw new Error("KIWOOM_APP_KEY / KIWOOM_APP_SECRET 시크릿이 설정되지 않았습니다.");
+  }
+  const qty = parseInt(env.KIWOOM_SELL_QTY || env.KIWOOM_BUY_QTY || "1", 10);
+  const token = await kiwoomIssueToken(env);
+
+  const res = await fetch(`${kiwoomHost(env)}/api/dostk/ordr`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json;charset=UTF-8",
+      authorization: `Bearer ${token}`,
+      "cont-yn": "N",
+      "next-key": "",
+      "api-id": "kt10001", // 주식 매도주문
+    },
+    body: JSON.stringify({
+      dmst_stex_tp: "KRX",
+      stk_cd: code,
+      ord_qty: String(qty),
+      ord_uv: "0", // 시장가는 주문단가 0
+      trde_tp: "3", // 3: 시장가
+    }),
+  });
+  const data = await res.json();
+  return { ok: res.ok && data.return_code === 0, qty, mock: env.KIWOOM_MOCK !== "false", raw: data };
+}
+
 // ---------- 엔트리포인트 ----------
 export default {
   async fetch(request, env) {
@@ -428,6 +539,17 @@ export default {
         const { code } = await request.json();
         if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
         const result = await kiwoomBuyOrder(env, code);
+        return Response.json(result);
+      } catch (e) {
+        return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+      }
+    }
+
+    if (url.pathname === "/api/sell" && request.method === "POST") {
+      try {
+        const { code } = await request.json();
+        if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
+        const result = await kiwoomSellOrder(env, code);
         return Response.json(result);
       } catch (e) {
         return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
