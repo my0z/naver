@@ -1,18 +1,16 @@
 /**
  * 네이버 상승률 5~15% 종목 스크리너
- * - cron으로 10분마다 KOSPI/KOSDAQ 상승률 페이지를 읽어서 5~15% 구간 종목을 D1에 저장
+ * - cron으로 KOSPI/KOSDAQ 상승률 페이지를 읽어서 5~15% 구간 종목을 D1에 저장
  * - / 로 접속하면 대시보드 표시 (최상단: 직전 스냅샷보다 더 오른 TOP5)
  *
- * 배포 방법 (Wrangler 없이 대시보드로):
- * 1. Cloudflare 대시보드 > Workers & Pages > Create Worker
- * 2. 코드 편집기에 이 파일 전체 붙여넣기
- * 3. Settings > Bindings > D1 Database 추가, Variable name: DB, 연결할 DB 선택
- *    (schema.sql을 그 DB에 먼저 실행해둘 것)
- * 4. Settings > Trigger > Cron Trigger 추가: 매 10분 (아래 CRON 참고)
+ * 배포: GitHub 연동 (Cloudflare Workers Builds) 사용
+ * - wrangler.toml 에 D1 바인딩 / cron 트리거가 정의되어 있음
+ * - D1 스키마(snapshots 테이블)는 별도 schema.sql로 미리 생성해둘 것
  *
- * 추천 Cron 표현식 (UTC 기준, 평일 09:00~15:59 KST 커버):
- *   매 10분마다 0-6시, 평일 (wrangler.toml [triggers] 참고)
- * (코드 안에서 09:00~15:30 KST가 아니면 스킵하므로 여유 있게 잡아도 됨)
+ * Cron (UTC 기준, 평일 KST 09:00~15:15 커버):
+ *   5분 간격 0-5시(UTC)        -> KST 09:00~14:55
+ *   0,5,10,15분 6시(UTC)      -> KST 15:00~15:15, 15:15에서 종료
+ * (코드 안에서도 09:00~15:15 KST가 아니면 스킵하므로 이중 안전장치)
  */
 
 const HEADERS = {
@@ -105,7 +103,7 @@ function isMarketHoursKST(date) {
   const day = kst.getDay(); // 0=Sun
   if (day === 0 || day === 6) return false;
   const minutes = kst.getHours() * 60 + kst.getMinutes();
-  return minutes >= 9 * 60 && minutes <= 15 * 60 + 30;
+  return minutes >= 9 * 60 && minutes <= 15 * 60 + 15; // 09:00 ~ 15:15
 }
 
 // ---------- Cron: 저장 ----------
@@ -198,6 +196,32 @@ function renderDashboard() {
   .up { color:#ff6b6b; }
   .delta { color:#ffd43b; }
   .empty { color:#666; padding:12px 0; }
+  tr.clickable { cursor:pointer; }
+  tr.clickable:active { background:#2a2a2a; }
+
+  /* 모달 */
+  #modalOverlay {
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6);
+    z-index:100; align-items:flex-end; justify-content:center;
+  }
+  #modalOverlay.open { display:flex; }
+  #modalBox {
+    background:#1c1c1c; width:100%; max-width:420px; border-radius:16px 16px 0 0;
+    padding:20px 16px 24px; animation:slideUp .15s ease-out;
+  }
+  @keyframes slideUp { from{ transform:translateY(20px); opacity:0; } to{ transform:translateY(0); opacity:1; } }
+  #modalBox h3 { margin:0 0 2px; font-size:17px; }
+  #modalBox .modalSub { color:#999; font-size:13px; margin-bottom:16px; }
+  #modalBox .modalSub .up { color:#ff6b6b; margin-left:6px; }
+  .modalBtn {
+    display:block; width:100%; box-sizing:border-box; text-align:center;
+    padding:14px; margin-bottom:10px; border-radius:10px; border:none;
+    font-size:15px; font-weight:600; text-decoration:none; cursor:pointer;
+  }
+  .modalBtn.chart { background:#2a2a2a; color:#eee; }
+  .modalBtn.price { background:#2a2a2a; color:#eee; }
+  .modalBtn.buy { background:#ff6b6b; color:#111; }
+  .modalBtn.cancel { background:transparent; color:#888; margin-bottom:0; padding:10px; }
 </style>
 </head>
 <body>
@@ -217,8 +241,69 @@ function renderDashboard() {
     </table>
   </div>
 
+  <div id="modalOverlay">
+    <div id="modalBox">
+      <h3 id="modalName">-</h3>
+      <div class="modalSub"><span id="modalPrice">-</span><span class="up" id="modalRate">-</span></div>
+      <a class="modalBtn chart" id="modalChartLink" target="_blank" rel="noopener">📈 차트 보기</a>
+      <a class="modalBtn price" id="modalPriceLink" target="_blank" rel="noopener">💰 현재가·호가 보기</a>
+      <button class="modalBtn buy" id="modalBuyBtn">🛒 키움증권으로 매수</button>
+      <button class="modalBtn cancel" id="modalCancelBtn">닫기</button>
+    </div>
+  </div>
+
 <script>
 function fmt(n){ return Number(n).toLocaleString(); }
+
+// ---------- 종목 클릭 모달 ----------
+const KIWOOM_APPSTORE = 'https://apps.apple.com/kr/app/id1570370057';
+const KIWOOM_ANDROID_PACKAGE = 'com.kiwoom.heromts';
+
+const modalOverlay = document.getElementById('modalOverlay');
+const modalName = document.getElementById('modalName');
+const modalPrice = document.getElementById('modalPrice');
+const modalRate = document.getElementById('modalRate');
+const modalChartLink = document.getElementById('modalChartLink');
+const modalPriceLink = document.getElementById('modalPriceLink');
+const modalBuyBtn = document.getElementById('modalBuyBtn');
+const modalCancelBtn = document.getElementById('modalCancelBtn');
+
+function openStockModal(item) {
+  modalName.textContent = item.name;
+  modalPrice.textContent = fmt(item.price) + '원';
+  modalRate.textContent = '+' + Number(item.rate).toFixed(2) + '%';
+  modalChartLink.href = 'https://m.stock.naver.com/domestic/stock/' + item.code + '/total';
+  modalPriceLink.href = 'https://finance.naver.com/item/main.naver?code=' + item.code;
+  modalBuyBtn.onclick = () => buyWithKiwoom(item.code, item.name);
+  modalOverlay.classList.add('open');
+}
+
+function closeStockModal() {
+  modalOverlay.classList.remove('open');
+}
+
+modalCancelBtn.addEventListener('click', closeStockModal);
+modalOverlay.addEventListener('click', (e) => {
+  if (e.target === modalOverlay) closeStockModal();
+});
+
+function buyWithKiwoom(code, name) {
+  // 종목코드 클립보드 복사 (키움 앱 자체 딥링크는 공식 스킴이 없어 검색창에 붙여넣는 방식으로 대체)
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(code).catch(() => {});
+  }
+  const ua = navigator.userAgent;
+  if (/Android/i.test(ua)) {
+    // 안드로이드: 패키지로 앱 실행 시도 (특정 종목 화면까지는 이동 불가, 앱만 켜짐)
+    window.location.href = 'intent://#Intent;package=' + KIWOOM_ANDROID_PACKAGE + ';end';
+  } else {
+    // iOS: 공식 커스텀 스킴 미확인 → 앱스토어로 유도 (이미 설치돼 있으면 보통 시스템이 앱으로 전환)
+    window.location.href = KIWOOM_APPSTORE;
+  }
+  setTimeout(() => {
+    alert(name + '(' + code + ') 종목코드가 복사되었습니다.\\n키움 앱 검색창에 붙여넣기 해주세요.');
+  }, 300);
+}
 
 async function load() {
   const res = await fetch('/api/latest');
@@ -230,7 +315,7 @@ async function load() {
 
   const top5Body = document.querySelector('#top5 tbody');
   top5Body.innerHTML = data.risingTop5.length
-    ? data.risingTop5.map(r => \`<tr>
+    ? data.risingTop5.map(r => \`<tr class="clickable" data-code="\${r.code}">
         <td>\${r.name}</td>
         <td>\${fmt(r.price)}</td>
         <td class="up">+\${r.change_rate.toFixed(2)}%</td>
@@ -240,13 +325,26 @@ async function load() {
 
   const allBody = document.querySelector('#all tbody');
   allBody.innerHTML = data.latest.length
-    ? data.latest.map(r => \`<tr>
+    ? data.latest.map(r => \`<tr class="clickable" data-code="\${r.code}">
         <td>\${r.name}</td>
         <td>\${fmt(r.price)}</td>
         <td class="up">+\${r.change_rate.toFixed(2)}%</td>
         <td>\${fmt(r.volume)}</td>
       </tr>\`).join('')
     : '<tr><td class="empty">데이터 없음</td></tr>';
+
+  // 클릭용 종목 정보 매핑 (top5 + all 합쳐서)
+  const byCode = {};
+  [...data.risingTop5, ...data.latest].forEach(r => {
+    byCode[r.code] = { code: r.code, name: r.name, price: r.price, rate: r.change_rate };
+  });
+
+  document.querySelectorAll('tr.clickable').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const item = byCode[tr.dataset.code];
+      if (item) openStockModal(item);
+    });
+  });
 }
 
 load();
