@@ -23,7 +23,7 @@ const HEADERS = {
 
 const MIN_RATE = 5;
 const MAX_RATE = 15;
-const MAX_PAGES = 8; // 안전장치: 페이지당 50종목 기준 최대 400종목까지만 스캔
+const MAX_PAGES = 3; // CPU 절약: 페이지당 50종목 기준 시장당 최대 150종목까지만 스캔
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -60,23 +60,38 @@ async function fetchRiseList(sosok) {
 }
 
 function parseRiseRows(html) {
-  // 종목코드+이름: <a href="/item/main.naver?code=005930" ...>삼성전자</a>
-  // 현재가: 그 뒤 첫 번째 <td class="number">숫자</td>
-  // 등락률: <span class="tah p11 red02">+12.34%</span> 형태 (색상 클래스는 red/blu/nv 다양)
-  // 거래량: 등락률 뒤쪽 <td class="number">숫자</td> (거래량 컬럼)
-  const rowRegex =
-    /<a href="\/item\/main\.naver\?code=(\d{6})"[^>]*>([^<]+)<\/a>[\s\S]*?<td class="number">([\d,]+)<\/td>[\s\S]*?<span class="tah p11 [a-z0-9]+">\s*([+-]?[\d.]+)%<\/span>[\s\S]*?<td class="number">([\d,]+)<\/td>[\s\S]*?<td class="number">([\d,]+)<\/td>/g;
+  // 1단계: 종목코드+이름 위치만 저렴하게 스캔 (문서 전체 1패스)
+  const anchorRe =
+    /<a href="\/item\/main\.naver\?code=(\d{6})"[^>]*>([^<]+)<\/a>/g;
 
   const out = [];
   let m;
-  while ((m = rowRegex.exec(html)) !== null) {
-    const [, code, name, priceStr, rateStr, , volumeStr] = m;
+  while ((m = anchorRe.exec(html)) !== null) {
+    const code = m[1];
+    const name = m[2].trim();
+
+    // 2단계: 해당 종목 뒤 700자만 잘라서 그 안에서만 탐색 (문서 끝까지 안 훑음 → CPU 고정비용)
+    const tail = html.slice(anchorRe.lastIndex, anchorRe.lastIndex + 700);
+
+    const nums = [];
+    const numRe = /<td class="number">([\d,]+)<\/td>/g;
+    let nm;
+    while (nums.length < 5 && (nm = numRe.exec(tail)) !== null) {
+      nums.push(parseInt(nm[1].replace(/,/g, ""), 10));
+    }
+
+    const rateMatch = tail.match(
+      /<span class="tah p11 [a-z0-9]+">\s*([+-]?[\d.]+)%<\/span>/
+    );
+
+    if (!rateMatch || nums.length < 3) continue; // 구조 매칭 실패한 행은 스킵
+
     out.push({
       code,
-      name: name.trim(),
-      price: parseInt(priceStr.replace(/,/g, ""), 10),
-      rate: parseFloat(rateStr),
-      volume: parseInt(volumeStr.replace(/,/g, ""), 10),
+      name,
+      price: nums[0],
+      rate: parseFloat(rateMatch[1]),
+      volume: nums[2],
     });
   }
   return out;
