@@ -3,6 +3,7 @@
  * - cron으로 10분마다 KOSPI/KOSDAQ 상승률 페이지를 읽어서 5~15% 구간 종목을 D1에 저장
  * - / 로 접속하면 대시보드 표시 (최상단: 직전 스냅샷보다 더 오른 TOP5)
  *
+ *
  * 배포 방법 (Wrangler 없이 대시보드로):
  * 1. Cloudflare 대시보드 > Workers & Pages > Create Worker
  * 2. 코드 편집기에 이 파일 전체 붙여넣기
