@@ -524,6 +524,31 @@ async function kiwoomSellOrder(env, code) {
   return { ok: res.ok && data.return_code === 0, qty, mock: env.KIWOOM_MOCK !== "false", raw: data };
 }
 
+// ---------- 디버그: 네이버 응답이 실제로 어떻게 오는지 확인 ----------
+async function debugFetch() {
+  const out = {};
+  for (const sosok of [0, 1]) {
+    const market = sosok === 0 ? "KOSPI" : "KOSDAQ";
+    const url = `https://finance.naver.com/sise/sise_rise.naver?sosok=${sosok}&page=1`;
+    try {
+      const res = await fetch(url, { headers: HEADERS });
+      const html = await res.text();
+      const rows = parseRiseRows(html);
+      out[market] = {
+        status: res.status,
+        ok: res.ok,
+        htmlLength: html.length,
+        rowsParsed: rows.length,
+        sampleRows: rows.slice(0, 3),
+        htmlSample: html.slice(0, 500),
+      };
+    } catch (e) {
+      out[market] = { error: String(e.message || e) };
+    }
+  }
+  return out;
+}
+
 // ---------- 엔트리포인트 ----------
 export default {
   async fetch(request, env) {
@@ -554,6 +579,11 @@ export default {
       } catch (e) {
         return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
       }
+    }
+
+    if (url.pathname === "/api/debug") {
+      const result = await debugFetch();
+      return Response.json(result);
     }
 
     if (url.pathname === "/api/run-now") {
