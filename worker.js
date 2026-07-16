@@ -308,8 +308,8 @@ function renderDashboard() {
     <div class="boardHeadRow">
       <h2>전체 목록 (등락률 5~15%)</h2>
       <div class="sortToggle">
-        <button class="sortBtn active" id="sortByRate">등락률순</button>
-        <button class="sortBtn" id="sortByVolumeDesc">거래량 많은순</button>
+        <button class="sortBtn" id="sortByRate">등락률순</button>
+        <button class="sortBtn active" id="sortByVolumeDesc">거래량 많은순</button>
         <button class="sortBtn" id="sortByVolumeAsc">거래량 적은순</button>
       </div>
     </div>
@@ -475,7 +475,7 @@ function renderSparkline(prices, period) {
 
 let latestList = [];
 let byCodeMap = {};
-let currentSort = 'rate';
+let currentSort = 'volumeDesc';
 
 function renderAllTable() {
   const sorted = [...latestList].sort((a, b) =>
