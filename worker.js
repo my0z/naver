@@ -374,14 +374,13 @@ function launchKiwoomApp() {
 openAppBtn.addEventListener('click', launchKiwoomApp);
 
 modalName.addEventListener('click', () => {
-  const copyText = currentModalName + ' : ' + currentModalCode;
   if (navigator.clipboard) {
-    navigator.clipboard.writeText(copyText).catch(() => {});
+    navigator.clipboard.writeText(currentModalCode).catch(() => {});
   }
   if (IS_MOBILE) {
     launchKiwoomApp();
   }
-  modalName.textContent = copyText + ' 복사됨';
+  modalName.textContent = currentModalName + ' (' + currentModalCode + ' 복사됨)';
 });
 
 function openStockModal(item) {
