@@ -322,9 +322,10 @@ function renderDashboard() {
   <div id="modalOverlay">
     <div id="modalBox">
       <div class="modalHeadRow">
-        <h3 id="modalName" class="clickableName">-</h3>
+        <h3 id="modalName">-</h3>
         <button class="openAppBtn" id="openAppBtn" style="display:none;">📲 키움 앱에서 열기</button>
       </div>
+      <div id="modalCodeBadge" class="clickableName">코드: -</div>
       <div class="modalSub"><span id="modalPrice">-</span><span class="up" id="modalRate">-</span></div>
       <div id="modalDetail"></div>
       <div class="periodRow" id="periodRow">
@@ -351,6 +352,7 @@ const modalName = document.getElementById('modalName');
 const modalPrice = document.getElementById('modalPrice');
 const modalRate = document.getElementById('modalRate');
 const modalDetail = document.getElementById('modalDetail');
+const modalCodeBadge = document.getElementById('modalCodeBadge');
 const periodRow = document.getElementById('periodRow');
 const modalPriceBtn = document.getElementById('modalPriceBtn');
 const modalCancelBtn = document.getElementById('modalCancelBtn');
@@ -373,22 +375,21 @@ function launchKiwoomApp() {
 
 openAppBtn.addEventListener('click', launchKiwoomApp);
 
-modalName.addEventListener('click', () => {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(currentModalCode).catch(() => {});
-  }
-  if (IS_MOBILE) {
-    launchKiwoomApp();
-  }
-  modalName.textContent = currentModalName + ' (' + currentModalCode + ' 복사됨)';
+modalCodeBadge.addEventListener('click', () => {
+  if (IS_MOBILE) launchKiwoomApp();
 });
 
 function openStockModal(item) {
-  modalName.textContent = item.name;
+  // 모달 뜨기 전에 종목코드부터 클립보드로 복사
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(item.code).catch(() => {});
+  }
   currentModalName = item.name;
+  currentModalCode = item.code;
+  modalName.textContent = item.name;
+  modalCodeBadge.textContent = '코드: ' + item.code + ' (복사됨)';
   modalPrice.textContent = fmt(item.price) + '원';
   modalRate.textContent = '+' + Number(item.rate).toFixed(2) + '%';
-  currentModalCode = item.code;
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '5'));
   modalPriceBtn.onclick = () => showQuote(item.code);
   modalOverlay.classList.add('open');
