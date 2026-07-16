@@ -64,7 +64,7 @@ function parseKiwoomRankingRows(json) {
   }
   return rows
     .map((row) => {
-      const code = row.stk_cd || row.stk_no || "";
+      const code = (row.stk_cd || row.stk_no || "").split("_")[0];
       const name = row.stk_nm || row.stk_name || "";
       const price =
         Math.abs(parseInt(String(row.cur_prc ?? "0").replace(/[^\d-]/g, ""), 10)) || 0;
