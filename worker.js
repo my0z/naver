@@ -40,6 +40,7 @@ async function kiwoomRankingUp(env, token, mrktTp) {
       updown_incls: "1", // 상하한 포함
       stk_cnd: "0", // 종목조건: 전체조회
       crd_cnd: "0", // 신용조건: 전체조회
+      pric_cnd: "0", // 가격조건: 전체조회
       trde_prica_cnd: "0", // 거래대금조건: 전체조회
       flu_cnd: "1", // 등락구분: 상승
       stex_tp: "3", // 거래소구분: 통합
