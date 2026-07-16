@@ -104,7 +104,7 @@ async function collectAndStore(env) {
 
   const token = await kiwoomIssueToken(env);
   const kospi = await fetchRiseListKiwoom(env, token, "001", "KOSPI");
-  await sleep(300); // ka10027 TR 호출 간 간격 (레이트리밋 방지)
+  await sleep(1100); // ka10027은 초당 1건 제한 -> 여유있게 1.1초 대기
   const kosdaq = await fetchRiseListKiwoom(env, token, "101", "KOSDAQ");
   const all = [...kospi, ...kosdaq];
   if (all.length === 0) return { saved: 0 };
@@ -537,7 +537,7 @@ async function debugFetch(env) {
       } catch (e) {
         out[market] = { error: String(e.message || e) };
       }
-      await sleep(300);
+      await sleep(1100);
     }
   } catch (e) {
     out.tokenIssued = false;
