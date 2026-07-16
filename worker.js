@@ -10,9 +10,8 @@
  * - D1 스키마(snapshots 테이블)는 별도 schema.sql로 미리 생성해둘 것
  * - KIWOOM_APP_KEY / KIWOOM_APP_SECRET 시크릿 필요 (Cloudflare 대시보드에서 Secret으로 등록)
  *
- * Cron (UTC 기준, 평일 KST 09:00~15:15 커버):
- *   5분 간격 0-5시(UTC)        -> KST 09:00~14:55
- *   0,5,10,15분 6시(UTC)      -> KST 15:00~15:15, 15:15에서 종료
+ * Cron (UTC 기준, 평일 KST 09:01~15:15 커버):
+ *   3분 간격으로 실행 (UTC 0-6시 범위, 실제 경계는 isMarketHoursKST()에서 처리)
  * (코드 안에서도 09:01~15:15 KST가 아니면 스킵하므로 이중 안전장치)
  */
 
@@ -293,6 +292,7 @@ function renderDashboard() {
   .modalBtn.cancel { background:transparent; color:#888; margin-bottom:0; padding:10px; }
   .streakBoard h2 { color:#ffd43b; }
   .streakBoard.streak5 h2 { color:#69db7c; }
+  .intervalTag { font-size:11px; color:#888; font-weight:normal; }
   .streakBadge { color:#ffd43b; font-size:11px; margin-left:6px; }
   #reloadBtn {
     position:fixed; right:14px; top:calc(50% - 30px); transform:translateY(-50%);
@@ -318,17 +318,17 @@ function renderDashboard() {
   <div class="sub" id="ts">불러오는 중...</div>
 
   <div class="board streakBoard streak5">
-    <h2>🚀 5연속 상승 종목</h2>
+    <h2>🚀 5연속 상승 종목 <span class="intervalTag">(3분간격)</span></h2>
     <table id="streak5"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
   </div>
 
   <div class="board streakBoard">
-    <h2>⚡ 3연속 상승 종목</h2>
+    <h2>⚡ 3연속 상승 종목 <span class="intervalTag">(3분간격)</span></h2>
     <table id="streak3"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
   </div>
 
   <div class="board">
-    <h2>5분 전보다 더 오른 TOP5</h2>
+    <h2>3분 전보다 더 오른 TOP5</h2>
     <table id="top5"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
   </div>
 
@@ -626,7 +626,7 @@ document.getElementById('collectBtn').addEventListener('click', (e) => {
 });
 
 load();
-setInterval(load, 60000); // 1분마다 화면 갱신 (저장 자체는 cron이 5분마다)
+setInterval(load, 60000); // 1분마다 화면 갱신 (저장 자체는 cron이 3분마다)
 </script>
 </body>
 </html>`;
