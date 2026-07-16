@@ -1,98 +1,87 @@
 /**
- * 네이버 상승률 5~15% 종목 스크리너
- * - cron으로 KOSPI/KOSDAQ 상승률 페이지를 읽어서 5~15% 구간 종목을 D1에 저장
- * - / 로 접속하면 대시보드 표시 (최상단: 직전 스냅샷보다 더 오른 TOP5)
+ * 키움 REST API 기반 5~15% 상승 종목 스크리너
+ * - cron으로 키움 ka10027(전일대비등락률상위요청)을 호출해 KOSPI/KOSDAQ 5~15% 구간 종목을 D1에 저장
+ * - / 로 접속하면 대시보드 표시 (최상단: 5연속/3연속 상승, 그 아래: 직전 대비 TOP5, 전체 목록)
+ * - 예전엔 네이버 금융 페이지를 스크래핑했으나, 네이버가 Cloudflare 계열 IP를 차단하는 것으로
+ *   보여 키움 REST API(시세조회 TR)로 전환함. 매수/매도 주문에 쓰던 앱키/시크릿을 그대로 재사용.
  *
  * 배포: GitHub 연동 (Cloudflare Workers Builds) 사용
  * - wrangler.toml 에 D1 바인딩 / cron 트리거가 정의되어 있음
  * - D1 스키마(snapshots 테이블)는 별도 schema.sql로 미리 생성해둘 것
+ * - KIWOOM_APP_KEY / KIWOOM_APP_SECRET 시크릿 필요 (Cloudflare 대시보드에서 Secret으로 등록)
  *
  * Cron (UTC 기준, 평일 KST 09:00~15:15 커버):
  *   5분 간격 0-5시(UTC)        -> KST 09:00~14:55
  *   0,5,10,15분 6시(UTC)      -> KST 15:00~15:15, 15:15에서 종료
- * (코드 안에서도 09:00~15:15 KST가 아니면 스킵하므로 이중 안전장치)
+ * (코드 안에서도 09:01~15:15 KST가 아니면 스킵하므로 이중 안전장치)
  */
-
-const HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-  Referer: "https://finance.naver.com/",
-};
 
 const MIN_RATE = 5;
 const MAX_RATE = 15;
-const MAX_PAGES = 3; // CPU 절약: 페이지당 50종목 기준 시장당 최대 150종목까지만 스캔
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ---------- 네이버 상승률 페이지 파싱 ----------
-async function fetchRiseList(sosok) {
-  // sosok=0: KOSPI, sosok=1: KOSDAQ
-  const market = sosok === 0 ? "KOSPI" : "KOSDAQ";
-  const results = [];
-
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    if (page > 1) await sleep(250); // 연속 요청 사이 딜레이
-
-    const url = `https://finance.naver.com/sise/sise_rise.naver?sosok=${sosok}&page=${page}`;
-    const res = await fetch(url, { headers: HEADERS });
-    if (!res.ok) break;
-    const html = await res.text();
-
-    const rows = parseRiseRows(html);
-    if (rows.length === 0) break;
-
-    let sawBelowMin = false;
-    for (const row of rows) {
-      if (row.rate > MAX_RATE) continue; // 15% 초과는 건너뛰고 계속 (혹시 순서 섞였을 경우 대비)
-      if (row.rate < MIN_RATE) {
-        sawBelowMin = true;
-        continue;
-      }
-      results.push({ ...row, market });
-    }
-    // 등락률 내림차순 정렬 페이지이므로, 이 페이지에서 5% 미만이 나왔으면 다음 페이지는 볼 필요 없음
-    if (sawBelowMin) break;
+// ---------- 키움 REST API: 등락률 상위 조회 (ka10027) ----------
+// mrktTp: "001"=코스피, "101"=코스닥
+async function kiwoomRankingUp(env, token, mrktTp) {
+  const res = await fetch(`${kiwoomHost(env)}/api/dostk/rkinfo`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json;charset=UTF-8",
+      authorization: `Bearer ${token}`,
+      "cont-yn": "N",
+      "next-key": "",
+      "api-id": "ka10027", // 전일대비등락률상위요청
+    },
+    body: JSON.stringify({
+      mrkt_tp: mrktTp,
+      sort_tp: "1", // 1: 상승률
+      updown_tp: "0", // 상하한 포함 여부: 0 불포함
+      stk_cnd: "0", // 종목조건: 전체조회
+      trde_qty_tp: "0000", // 거래량조건: 전체조회
+      crd_cnd: "0", // 신용조건: 전체조회
+      trde_gold_tp: "0", // 거래대금조건: 전체조회
+      stex_tp: "1", // 거래소구분: KRX
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.return_code !== 0) {
+    throw new Error(`ka10027 실패(mrkt_tp=${mrktTp}): ${JSON.stringify(data)}`);
   }
-  return results;
+  return data;
 }
 
-function parseRiseRows(html) {
-  // 1단계: 종목코드+이름 위치만 저렴하게 스캔 (문서 전체 1패스)
-  const anchorRe =
-    /<a href="\/item\/main\.naver\?code=(\d{6})"[^>]*>([^<]+)<\/a>/g;
-
-  const out = [];
-  let m;
-  while ((m = anchorRe.exec(html)) !== null) {
-    const code = m[1];
-    const name = m[2].trim();
-
-    // 2단계: 해당 종목 뒤 700자만 잘라서 그 안에서만 탐색 (문서 끝까지 안 훑음 → CPU 고정비용)
-    const tail = html.slice(anchorRe.lastIndex, anchorRe.lastIndex + 700);
-
-    const nums = [];
-    const numRe = /<td class="number">([\d,]+)<\/td>/g;
-    let nm;
-    while (nums.length < 5 && (nm = numRe.exec(tail)) !== null) {
-      nums.push(parseInt(nm[1].replace(/,/g, ""), 10));
+// 응답에서 return_code/return_msg를 제외한 첫 배열 필드를 데이터로 간주 후 필드명 유연 매핑
+function parseKiwoomRankingRows(json) {
+  let rows = [];
+  for (const key of Object.keys(json)) {
+    if (Array.isArray(json[key])) {
+      rows = json[key];
+      break;
     }
-
-    const rateMatch = tail.match(
-      /<span class="tah p11 [a-z0-9]+">\s*([+-]?[\d.]+)%<\/span>/
-    );
-
-    if (!rateMatch || nums.length < 3) continue; // 구조 매칭 실패한 행은 스킵
-
-    out.push({
-      code,
-      name,
-      price: nums[0],
-      rate: parseFloat(rateMatch[1]),
-      volume: nums[2],
-    });
   }
-  return out;
+  return rows
+    .map((row) => {
+      const code = row.stk_cd || row.stk_no || "";
+      const name = row.stk_nm || row.stk_name || "";
+      const price =
+        Math.abs(parseInt(String(row.cur_prc ?? "0").replace(/[^\d-]/g, ""), 10)) || 0;
+      const rate = parseFloat(row.flu_rt ?? row.updn_rt ?? "0") || 0;
+      const volume =
+        Math.abs(
+          parseInt(String(row.now_trde_qty ?? row.trde_qty ?? "0").replace(/[^\d-]/g, ""), 10)
+        ) || 0;
+      return { code, name, price, rate, volume };
+    })
+    .filter((r) => r.code);
+}
+
+async function fetchRiseListKiwoom(env, token, mrktTp, market) {
+  const json = await kiwoomRankingUp(env, token, mrktTp);
+  const rows = parseKiwoomRankingRows(json);
+  return rows
+    .filter((r) => r.rate >= MIN_RATE && r.rate <= MAX_RATE)
+    .map((r) => ({ ...r, market }));
 }
 
 // ---------- KST 시간 체크 ----------
@@ -111,9 +100,10 @@ async function collectAndStore(env) {
   const now = new Date();
   const capturedAt = now.toISOString();
 
-  const kospi = await fetchRiseList(0);
-  await sleep(250);
-  const kosdaq = await fetchRiseList(1);
+  const token = await kiwoomIssueToken(env);
+  const kospi = await fetchRiseListKiwoom(env, token, "001", "KOSPI");
+  await sleep(300); // ka10027 TR 호출 간 간격 (레이트리밋 방지)
+  const kosdaq = await fetchRiseListKiwoom(env, token, "101", "KOSDAQ");
   const all = [...kospi, ...kosdaq];
   if (all.length === 0) return { saved: 0 };
 
@@ -524,27 +514,32 @@ async function kiwoomSellOrder(env, code) {
   return { ok: res.ok && data.return_code === 0, qty, mock: env.KIWOOM_MOCK !== "false", raw: data };
 }
 
-// ---------- 디버그: 네이버 응답이 실제로 어떻게 오는지 확인 ----------
-async function debugFetch() {
+// ---------- 디버그: 키움 ka10027 응답이 실제로 어떻게 오는지 확인 ----------
+async function debugFetch(env) {
   const out = {};
-  for (const sosok of [0, 1]) {
-    const market = sosok === 0 ? "KOSPI" : "KOSDAQ";
-    const url = `https://finance.naver.com/sise/sise_rise.naver?sosok=${sosok}&page=1`;
-    try {
-      const res = await fetch(url, { headers: HEADERS });
-      const html = await res.text();
-      const rows = parseRiseRows(html);
-      out[market] = {
-        status: res.status,
-        ok: res.ok,
-        htmlLength: html.length,
-        rowsParsed: rows.length,
-        sampleRows: rows.slice(0, 3),
-        htmlSample: html.slice(0, 500),
-      };
-    } catch (e) {
-      out[market] = { error: String(e.message || e) };
+  try {
+    const token = await kiwoomIssueToken(env);
+    out.tokenIssued = true;
+    for (const [mrktTp, market] of [["001", "KOSPI"], ["101", "KOSDAQ"]]) {
+      try {
+        const json = await kiwoomRankingUp(env, token, mrktTp);
+        const rows = parseKiwoomRankingRows(json);
+        out[market] = {
+          returnCode: json.return_code,
+          returnMsg: json.return_msg,
+          parsedRowCount: rows.length,
+          sampleParsedRows: rows.slice(0, 3),
+          rawKeys: Object.keys(json),
+          rawSample: JSON.stringify(json).slice(0, 1000),
+        };
+      } catch (e) {
+        out[market] = { error: String(e.message || e) };
+      }
+      await sleep(300);
     }
+  } catch (e) {
+    out.tokenIssued = false;
+    out.tokenError = String(e.message || e);
   }
   return out;
 }
@@ -582,7 +577,7 @@ export default {
     }
 
     if (url.pathname === "/api/debug") {
-      const result = await debugFetch();
+      const result = await debugFetch(env);
       return Response.json(result);
     }
 
