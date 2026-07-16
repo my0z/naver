@@ -245,6 +245,8 @@ function renderDashboard() {
   }
   @keyframes slideUp { from{ transform:translateY(20px); opacity:0; } to{ transform:translateY(0); opacity:1; } }
   #modalBox h3 { margin:0 0 2px; font-size:17px; }
+  .modalHeadRow { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .openAppBtn { background:#2a2a2a; color:#69db7c; border:none; border-radius:8px; padding:6px 10px; font-size:11px; white-space:nowrap; cursor:pointer; }
   #modalBox .modalSub { color:#999; font-size:13px; margin-bottom:16px; }
   #modalBox .modalSub .up { color:#ff6b6b; margin-left:6px; }
   #modalDetail:empty { display:none; }
@@ -255,6 +257,17 @@ function renderDashboard() {
   .detailGrid b { display:block; font-size:14px; color:#eee; margin-top:2px; }
   .detailGrid b.up { color:#ff6b6b; }
   .chartRange { font-size:11px; color:#888; text-align:center; margin-top:4px; }
+  .periodRow { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+  .periodBtn {
+    flex:1; min-width:40px; padding:8px 4px; border-radius:8px; border:none;
+    background:#2a2a2a; color:#aaa; font-size:12px; cursor:pointer;
+  }
+  .periodBtn.active { background:#ff6b6b; color:#111; font-weight:600; }
+  .boardHeadRow { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .boardHeadRow h2 { margin:0; }
+  .sortToggle { display:flex; gap:6px; }
+  .sortBtn { background:#2a2a2a; color:#aaa; border:none; border-radius:6px; padding:5px 10px; font-size:11px; cursor:pointer; }
+  .sortBtn.active { background:#ff6b6b; color:#111; font-weight:600; }
   .modalBtn {
     display:block; width:100%; box-sizing:border-box; text-align:center;
     padding:14px; margin-bottom:10px; border-radius:10px; border:none;
@@ -290,7 +303,13 @@ function renderDashboard() {
   </div>
 
   <div class="board">
-    <h2>전체 목록 (등락률 5~15%)</h2>
+    <div class="boardHeadRow">
+      <h2>전체 목록 (등락률 5~15%)</h2>
+      <div class="sortToggle">
+        <button class="sortBtn active" id="sortByRate">등락률순</button>
+        <button class="sortBtn" id="sortByVolume">거래량순</button>
+      </div>
+    </div>
     <table id="all">
       <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래량</th></tr></thead>
       <tbody><tr><td class="empty">데이터 없음</td></tr></tbody>
@@ -299,10 +318,22 @@ function renderDashboard() {
 
   <div id="modalOverlay">
     <div id="modalBox">
-      <h3 id="modalName">-</h3>
+      <div class="modalHeadRow">
+        <h3 id="modalName">-</h3>
+        <button class="openAppBtn" id="openAppBtn" style="display:none;">📲 키움 앱에서 열기</button>
+      </div>
       <div class="modalSub"><span id="modalPrice">-</span><span class="up" id="modalRate">-</span></div>
       <div id="modalDetail"></div>
-      <button class="modalBtn chart" id="modalChartBtn">📊 차트 보기</button>
+      <div class="periodRow" id="periodRow">
+        <button class="periodBtn" data-period="T">틱</button>
+        <button class="periodBtn" data-period="1">1분</button>
+        <button class="periodBtn active" data-period="5">5분</button>
+        <button class="periodBtn" data-period="15">15분</button>
+        <button class="periodBtn" data-period="30">30분</button>
+        <button class="periodBtn" data-period="D">일봉</button>
+        <button class="periodBtn" data-period="W">주봉</button>
+        <button class="periodBtn" data-period="M">월봉</button>
+      </div>
       <button class="modalBtn price" id="modalPriceBtn">💰 현재가 새로고침</button>
       <button class="modalBtn buy" id="modalBuyBtn">🛒 매수</button>
       <button class="modalBtn sell" id="modalSellBtn">💸 매도</button>
@@ -319,23 +350,47 @@ const modalName = document.getElementById('modalName');
 const modalPrice = document.getElementById('modalPrice');
 const modalRate = document.getElementById('modalRate');
 const modalDetail = document.getElementById('modalDetail');
-const modalChartBtn = document.getElementById('modalChartBtn');
+const periodRow = document.getElementById('periodRow');
 const modalPriceBtn = document.getElementById('modalPriceBtn');
 const modalBuyBtn = document.getElementById('modalBuyBtn');
 const modalSellBtn = document.getElementById('modalSellBtn');
 const modalCancelBtn = document.getElementById('modalCancelBtn');
+let currentModalCode = null;
+const openAppBtn = document.getElementById('openAppBtn');
+const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const KIWOOM_ANDROID_PACKAGE = 'com.kiwoom.heromts';
+const KIWOOM_APPSTORE = 'https://apps.apple.com/kr/app/id1570370057';
+
+if (IS_MOBILE) openAppBtn.style.display = '';
+
+openAppBtn.addEventListener('click', () => {
+  if (/Android/i.test(navigator.userAgent)) {
+    window.location.href = 'intent://#Intent;package=' + KIWOOM_ANDROID_PACKAGE + ';end';
+  } else {
+    window.location.href = KIWOOM_APPSTORE;
+  }
+});
 
 function openStockModal(item) {
   modalName.textContent = item.name;
   modalPrice.textContent = fmt(item.price) + '원';
   modalRate.textContent = '+' + Number(item.rate).toFixed(2) + '%';
-  modalDetail.innerHTML = '';
-  modalChartBtn.onclick = () => showChart(item.code);
+  currentModalCode = item.code;
+  periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '5'));
   modalPriceBtn.onclick = () => showQuote(item.code);
   modalBuyBtn.onclick = () => tradeWithKiwoom('buy', item.code, item.name);
   modalSellBtn.onclick = () => tradeWithKiwoom('sell', item.code, item.name);
   modalOverlay.classList.add('open');
+  showChart(item.code, '5');
 }
+
+periodRow.addEventListener('click', (e) => {
+  const btn = e.target.closest('.periodBtn');
+  if (!btn || !currentModalCode) return;
+  periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  showChart(currentModalCode, btn.dataset.period);
+});
 
 function closeStockModal() {
   modalOverlay.classList.remove('open');
@@ -370,23 +425,25 @@ function showQuote(code) {
     });
 }
 
-function showChart(code) {
+const PERIOD_LABEL = { 'T':'틱차트', '1':'1분봉', '5':'5분봉', '15':'15분봉', '30':'30분봉', 'D':'일봉', 'W':'주봉', 'M':'월봉' };
+
+function showChart(code, period) {
   modalDetail.innerHTML = '<div class="detailLoading">차트 불러오는 중...</div>';
-  fetch('/api/chart?code=' + code)
+  fetch('/api/chart?code=' + code + '&period=' + period)
     .then(res => res.json())
     .then(data => {
       if (!data.ok || !data.prices || data.prices.length < 2) {
         modalDetail.innerHTML = '<div class="detailError">차트 데이터 없음' + (data.error ? (': ' + data.error) : '') + '</div>';
         return;
       }
-      modalDetail.innerHTML = renderSparkline(data.prices);
+      modalDetail.innerHTML = renderSparkline(data.prices, period);
     })
     .catch(err => {
       modalDetail.innerHTML = '<div class="detailError">차트 요청 오류: ' + err.message + '</div>';
     });
 }
 
-function renderSparkline(prices) {
+function renderSparkline(prices, period) {
   const w = 340, h = 120, pad = 6;
   const min = Math.min(...prices), max = Math.max(...prices);
   const range = (max - min) || 1;
@@ -401,7 +458,7 @@ function renderSparkline(prices) {
   return '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h + '">' +
     '<polyline points="' + points + '" fill="none" stroke="' + color + '" stroke-width="2" />' +
     '</svg>' +
-    '<div class="chartRange">' + fmt(min) + '원 ~ ' + fmt(max) + '원 (5분봉)</div>';
+    '<div class="chartRange">' + fmt(min) + '원 ~ ' + fmt(max) + '원 (' + (PERIOD_LABEL[period] || period) + ')</div>';
 }
 
 function tradeWithKiwoom(side, code, name) {
@@ -435,6 +492,45 @@ function tradeWithKiwoom(side, code, name) {
       btn.textContent = btnDefaultText;
     });
 }
+
+let latestList = [];
+let byCodeMap = {};
+let currentSort = 'rate';
+
+function renderAllTable() {
+  const sorted = [...latestList].sort((a, b) =>
+    currentSort === 'volume' ? b.volume - a.volume : b.change_rate - a.change_rate
+  );
+  const allBody = document.querySelector('#all tbody');
+  allBody.innerHTML = sorted.length
+    ? sorted.map(r => \`<tr class="clickable" data-code="\${r.code}">
+        <td>\${r.name}</td>
+        <td>\${fmt(r.price)}</td>
+        <td class="up">+\${r.change_rate.toFixed(2)}%</td>
+        <td>\${fmt(r.volume)}</td>
+      </tr>\`).join('')
+    : '<tr><td class="empty">데이터 없음</td></tr>';
+
+  allBody.querySelectorAll('tr.clickable').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const item = byCodeMap[tr.dataset.code];
+      if (item) openStockModal(item);
+    });
+  });
+}
+
+document.getElementById('sortByRate').addEventListener('click', (e) => {
+  currentSort = 'rate';
+  document.querySelectorAll('.sortBtn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  renderAllTable();
+});
+document.getElementById('sortByVolume').addEventListener('click', (e) => {
+  currentSort = 'volume';
+  document.querySelectorAll('.sortBtn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  renderAllTable();
+});
 
 async function load() {
   const res = await fetch('/api/latest');
@@ -474,25 +570,19 @@ async function load() {
       </tr>\`).join('')
     : '<tr><td class="empty">직전 스냅샷 대비 상승 종목 없음</td></tr>';
 
-  const allBody = document.querySelector('#all tbody');
-  allBody.innerHTML = data.latest.length
-    ? data.latest.map(r => \`<tr class="clickable" data-code="\${r.code}">
-        <td>\${r.name}</td>
-        <td>\${fmt(r.price)}</td>
-        <td class="up">+\${r.change_rate.toFixed(2)}%</td>
-        <td>\${fmt(r.volume)}</td>
-      </tr>\`).join('')
-    : '<tr><td class="empty">데이터 없음</td></tr>';
+  latestList = data.latest;
 
   // 클릭용 종목 정보 매핑 (streak5 + streak3 + top5 + all 합쳐서)
-  const byCode = {};
+  byCodeMap = {};
   [...data.streak5, ...data.streak3, ...data.risingTop5, ...data.latest].forEach(r => {
-    byCode[r.code] = { code: r.code, name: r.name, price: r.price, rate: r.change_rate };
+    byCodeMap[r.code] = { code: r.code, name: r.name, price: r.price, rate: r.change_rate };
   });
 
-  document.querySelectorAll('tr.clickable').forEach(tr => {
+  renderAllTable();
+
+  document.querySelectorAll('#streak5 tr.clickable, #streak3 tr.clickable, #top5 tr.clickable').forEach(tr => {
     tr.addEventListener('click', () => {
-      const item = byCode[tr.dataset.code];
+      const item = byCodeMap[tr.dataset.code];
       if (item) openStockModal(item);
     });
   });
@@ -621,8 +711,35 @@ function parseKiwoomQuote(json) {
   };
 }
 
-// ---------- 키움 REST API: 분봉 차트 ----------
-async function kiwoomMinuteChart(env, token, code, ticScope) {
+// ---------- 키움 REST API: 차트 (분/일/주/월봉 통합) ----------
+function todayYYYYMMDD() {
+  const kst = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
+  const y = kst.getFullYear();
+  const m = String(kst.getMonth() + 1).padStart(2, "0");
+  const d = String(kst.getDate()).padStart(2, "0");
+  return `${y}${m}${d}`;
+}
+
+// period: "1"|"3"|"5"|"10"|"15"|"30"|"45"|"60" (분봉) 또는 "D"(일봉)|"W"(주봉)|"M"(월봉)
+async function kiwoomChart(env, token, code, period) {
+  let apiId, body;
+  if (period === "T") {
+    apiId = "ka10079"; // 주식틱차트조회요청
+    body = { stk_cd: code, tic_scope: "1", upd_stkpc_tp: "1" };
+  } else if (period === "D") {
+    apiId = "ka10081"; // 주식일봉차트조회요청
+    body = { stk_cd: code, base_dt: todayYYYYMMDD(), upd_stkpc_tp: "1" };
+  } else if (period === "W") {
+    apiId = "ka10082"; // 주식주봉차트조회요청
+    body = { stk_cd: code, base_dt: todayYYYYMMDD(), upd_stkpc_tp: "1" };
+  } else if (period === "M") {
+    apiId = "ka10083"; // 주식월봉차트조회요청
+    body = { stk_cd: code, base_dt: todayYYYYMMDD(), upd_stkpc_tp: "1" };
+  } else {
+    apiId = "ka10080"; // 주식분봉차트조회요청
+    body = { stk_cd: code, tic_scope: period, upd_stkpc_tp: "1" };
+  }
+
   const res = await fetch(`${kiwoomHost(env)}/api/dostk/chart`, {
     method: "POST",
     headers: {
@@ -630,17 +747,13 @@ async function kiwoomMinuteChart(env, token, code, ticScope) {
       authorization: `Bearer ${token}`,
       "cont-yn": "N",
       "next-key": "",
-      "api-id": "ka10080", // 주식분봉차트조회요청
+      "api-id": apiId,
     },
-    body: JSON.stringify({
-      stk_cd: code,
-      tic_scope: ticScope, // 1:1분봉, 5:5분봉 ...
-      upd_stkpc_tp: "1", // 수정주가 적용
-    }),
+    body: JSON.stringify(body),
   });
   const data = await res.json();
   if (!res.ok || data.return_code !== 0) {
-    throw new Error(`ka10080 실패(code=${code}): ${JSON.stringify(data)}`);
+    throw new Error(`${apiId} 실패(code=${code}): ${JSON.stringify(data)}`);
   }
   return data;
 }
@@ -737,9 +850,10 @@ export default {
       if (url.pathname === "/api/chart") {
         try {
           const code = url.searchParams.get("code");
+          const period = url.searchParams.get("period") || "5";
           if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
           const token = await kiwoomIssueToken(env);
-          const raw = await kiwoomMinuteChart(env, token, code, "5");
+          const raw = await kiwoomChart(env, token, code, period);
           const prices = parseKiwoomChart(raw);
           return Response.json({ ok: true, prices });
         } catch (e) {
@@ -766,8 +880,9 @@ export default {
       if (url.pathname === "/api/debug-chart") {
         try {
           const code = url.searchParams.get("code") || "005930";
+          const period = url.searchParams.get("period") || "5";
           const token = await kiwoomIssueToken(env);
-          const raw = await kiwoomMinuteChart(env, token, code, "5");
+          const raw = await kiwoomChart(env, token, code, period);
           return Response.json({ ok: true, rawKeys: Object.keys(raw), rawSample: JSON.stringify(raw).slice(0, 1500) });
         } catch (e) {
           return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
