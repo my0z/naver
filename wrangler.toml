@@ -8,4 +8,17 @@ database_name = "usbkr-db"
 database_id = "e4bd43bd-8692-45ad-8e99-28519cc78520"
 
 [triggers]
-crons = ["*/5 0-6 * * 1-5"]
+# 3분마다 실행, UTC 0-6시(KST 09:00~15:59) 범위로 넉넉히 잡고
+# 실제 09:01~15:15 경계는 코드 내부 isMarketHoursKST()에서 걸러냄
+crons = ["*/3 0-6 * * 1-5"]
+
+[vars]
+# 민감하지 않은 값만 여기 둠. "true" = 모의투자, "false" = 실전투자
+KIWOOM_MOCK = "true"
+KIWOOM_BUY_QTY = "1"
+KIWOOM_SELL_QTY = "1"
+
+# KIWOOM_APP_KEY, KIWOOM_APP_SECRET 은 여기 넣지 말 것!
+# Cloudflare 대시보드 > Workers & Pages > 해당 Worker > Settings
+# > Variables and Secrets > Add > 타입을 "Secret"으로 선택해서 등록.
+# (git에 커밋되는 이 파일에 시크릿을 넣으면 그대로 노출됩니다)
