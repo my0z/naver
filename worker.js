@@ -21,6 +21,18 @@ const MAX_RATE = 15;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ---------- 일반종목 필터 (ETF/ETN/인버스/레버리지 등 제외) ----------
+const NON_STOCK_KEYWORD = /(ETN|ETF|인버스|레버리지|선물|커버드콜|합성|파생결합|TDF|액티브|스팩|리츠|맥쿼리인프라)/i;
+const ETF_BRAND_PREFIX =
+  /^(KODEX|TIGER|KBSTAR|KIWOOM|ACE|SOL|RISE|PLUS|HANARO|KOSEF|KINDEX|TIMEFOLIO|마이다스|파워|WOORI|히어로즈|신한|대신|KTOP|FOCUS|네비게이터|파빌리온|우리|코세프|VITA|1Q|삼성|미래에셋|한투|마이티|WON|IBK|메리츠)\s?[0-9A-Za-z가-힣]*(200|100|150|300|배당|채권|국고채|MSCI|합성)/i;
+
+function isRegularStock(name) {
+  if (!name) return false;
+  if (NON_STOCK_KEYWORD.test(name)) return false;
+  if (ETF_BRAND_PREFIX.test(name)) return false;
+  return true;
+}
+
 // ---------- 키움 REST API: 등락률 상위 조회 (ka10027) ----------
 // mrktTp: "001"=코스피, "101"=코스닥
 async function kiwoomRankingUp(env, token, mrktTp) {
@@ -82,7 +94,7 @@ async function fetchRiseListKiwoom(env, token, mrktTp, market) {
   const json = await kiwoomRankingUp(env, token, mrktTp);
   const rows = parseKiwoomRankingRows(json);
   return rows
-    .filter((r) => r.rate >= MIN_RATE && r.rate <= MAX_RATE)
+    .filter((r) => r.rate >= MIN_RATE && r.rate <= MAX_RATE && isRegularStock(r.name))
     .map((r) => ({ ...r, market }));
 }
 
