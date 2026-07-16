@@ -307,7 +307,8 @@ function renderDashboard() {
       <h2>전체 목록 (등락률 5~15%)</h2>
       <div class="sortToggle">
         <button class="sortBtn active" id="sortByRate">등락률순</button>
-        <button class="sortBtn" id="sortByVolume">거래량순</button>
+        <button class="sortBtn" id="sortByVolumeDesc">거래량 많은순</button>
+        <button class="sortBtn" id="sortByVolumeAsc">거래량 적은순</button>
       </div>
     </div>
     <table id="all">
@@ -499,7 +500,9 @@ let currentSort = 'rate';
 
 function renderAllTable() {
   const sorted = [...latestList].sort((a, b) =>
-    currentSort === 'volume' ? b.volume - a.volume : b.change_rate - a.change_rate
+    currentSort === 'volumeDesc' ? b.volume - a.volume
+    : currentSort === 'volumeAsc' ? a.volume - b.volume
+    : b.change_rate - a.change_rate
   );
   const allBody = document.querySelector('#all tbody');
   allBody.innerHTML = sorted.length
@@ -525,8 +528,14 @@ document.getElementById('sortByRate').addEventListener('click', (e) => {
   e.target.classList.add('active');
   renderAllTable();
 });
-document.getElementById('sortByVolume').addEventListener('click', (e) => {
-  currentSort = 'volume';
+document.getElementById('sortByVolumeDesc').addEventListener('click', (e) => {
+  currentSort = 'volumeDesc';
+  document.querySelectorAll('.sortBtn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  renderAllTable();
+});
+document.getElementById('sortByVolumeAsc').addEventListener('click', (e) => {
+  currentSort = 'volumeAsc';
   document.querySelectorAll('.sortBtn').forEach(b => b.classList.remove('active'));
   e.target.classList.add('active');
   renderAllTable();
