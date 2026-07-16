@@ -36,12 +36,13 @@ async function kiwoomRankingUp(env, token, mrktTp) {
     body: JSON.stringify({
       mrkt_tp: mrktTp,
       sort_tp: "1", // 1: 상승률
-      updown_tp: "0", // 상하한 포함 여부: 0 불포함
+      trde_qty_cnd: "0000", // 거래량조건: 전체조회
+      updown_incls: "1", // 상하한 포함
       stk_cnd: "0", // 종목조건: 전체조회
-      trde_qty_tp: "0000", // 거래량조건: 전체조회
       crd_cnd: "0", // 신용조건: 전체조회
-      trde_gold_tp: "0", // 거래대금조건: 전체조회
-      stex_tp: "1", // 거래소구분: KRX
+      trde_prica_cnd: "0", // 거래대금조건: 전체조회
+      flu_cnd: "1", // 등락구분: 상승
+      stex_tp: "3", // 거래소구분: 통합
     }),
   });
   const data = await res.json();
