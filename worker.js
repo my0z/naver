@@ -549,51 +549,63 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    if (url.pathname === "/api/latest") {
-      const data = await getLatest(env);
-      return Response.json(data);
-    }
-
-    if (url.pathname === "/api/buy" && request.method === "POST") {
-      try {
-        const { code } = await request.json();
-        if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
-        const result = await kiwoomBuyOrder(env, code);
-        return Response.json(result);
-      } catch (e) {
-        return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+    try {
+      if (url.pathname === "/api/latest") {
+        const data = await getLatest(env);
+        return Response.json(data);
       }
-    }
 
-    if (url.pathname === "/api/sell" && request.method === "POST") {
-      try {
-        const { code } = await request.json();
-        if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
-        const result = await kiwoomSellOrder(env, code);
-        return Response.json(result);
-      } catch (e) {
-        return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+      if (url.pathname === "/api/buy" && request.method === "POST") {
+        try {
+          const { code } = await request.json();
+          if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
+          const result = await kiwoomBuyOrder(env, code);
+          return Response.json(result);
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
       }
-    }
 
-    if (url.pathname === "/api/debug") {
-      const result = await debugFetch(env);
-      return Response.json(result);
-    }
+      if (url.pathname === "/api/sell" && request.method === "POST") {
+        try {
+          const { code } = await request.json();
+          if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
+          const result = await kiwoomSellOrder(env, code);
+          return Response.json(result);
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
 
-    if (url.pathname === "/api/run-now") {
-      // 수동 테스트용 (배포 직후 cron 기다리지 않고 바로 확인)
-      const result = await collectAndStore(env);
-      return Response.json(result);
-    }
+      if (url.pathname === "/api/debug") {
+        const result = await debugFetch(env);
+        return Response.json(result);
+      }
 
-    return new Response(renderDashboard(), {
-      headers: { "content-type": "text/html; charset=UTF-8" },
-    });
+      if (url.pathname === "/api/run-now") {
+        // 수동 테스트용 (배포 직후 cron 기다리지 않고 바로 확인)
+        const result = await collectAndStore(env);
+        return Response.json(result);
+      }
+
+      return new Response(renderDashboard(), {
+        headers: { "content-type": "text/html; charset=UTF-8" },
+      });
+    } catch (e) {
+      // 처리 안 된 예외를 Cloudflare의 1101 에러 페이지 대신 그대로 노출
+      return Response.json(
+        { ok: false, error: String(e.message || e), stack: String(e.stack || "") },
+        { status: 500 }
+      );
+    }
   },
 
   async scheduled(event, env, ctx) {
     if (!isMarketHoursKST(new Date())) return;
-    ctx.waitUntil(collectAndStore(env));
+    ctx.waitUntil(
+      collectAndStore(env).catch((e) => {
+        console.error("scheduled collectAndStore 실패:", e.message || e);
+      })
+    );
   },
 };
