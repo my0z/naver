@@ -245,6 +245,8 @@ function renderDashboard() {
   }
   @keyframes slideUp { from{ transform:translateY(20px); opacity:0; } to{ transform:translateY(0); opacity:1; } }
   #modalBox h3 { margin:0 0 2px; font-size:17px; }
+  .clickableName { cursor:pointer; text-decoration:underline dotted; }
+  .clickableName:active { opacity:0.6; }
   .modalHeadRow { display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .openAppBtn { background:#2a2a2a; color:#69db7c; border:none; border-radius:8px; padding:6px 10px; font-size:11px; white-space:nowrap; cursor:pointer; }
   #modalBox .modalSub { color:#999; font-size:13px; margin-bottom:16px; }
@@ -320,7 +322,7 @@ function renderDashboard() {
   <div id="modalOverlay">
     <div id="modalBox">
       <div class="modalHeadRow">
-        <h3 id="modalName">-</h3>
+        <h3 id="modalName" class="clickableName">-</h3>
         <button class="openAppBtn" id="openAppBtn" style="display:none;">📲 키움 앱에서 열기</button>
       </div>
       <div class="modalSub"><span id="modalPrice">-</span><span class="up" id="modalRate">-</span></div>
@@ -336,8 +338,6 @@ function renderDashboard() {
         <button class="periodBtn" data-period="M">월봉</button>
       </div>
       <button class="modalBtn price" id="modalPriceBtn">💰 현재가 새로고침</button>
-      <button class="modalBtn buy" id="modalBuyBtn">🛒 매수</button>
-      <button class="modalBtn sell" id="modalSellBtn">💸 매도</button>
       <button class="modalBtn cancel" id="modalCancelBtn">닫기</button>
     </div>
   </div>
@@ -353,10 +353,9 @@ const modalRate = document.getElementById('modalRate');
 const modalDetail = document.getElementById('modalDetail');
 const periodRow = document.getElementById('periodRow');
 const modalPriceBtn = document.getElementById('modalPriceBtn');
-const modalBuyBtn = document.getElementById('modalBuyBtn');
-const modalSellBtn = document.getElementById('modalSellBtn');
 const modalCancelBtn = document.getElementById('modalCancelBtn');
 let currentModalCode = null;
+let currentModalName = null;
 const openAppBtn = document.getElementById('openAppBtn');
 const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const KIWOOM_ANDROID_PACKAGE = 'com.kiwoom.heromts';
@@ -364,23 +363,35 @@ const KIWOOM_APPSTORE = 'https://apps.apple.com/kr/app/id1570370057';
 
 if (IS_MOBILE) openAppBtn.style.display = '';
 
-openAppBtn.addEventListener('click', () => {
+function launchKiwoomApp() {
   if (/Android/i.test(navigator.userAgent)) {
     window.location.href = 'intent://#Intent;package=' + KIWOOM_ANDROID_PACKAGE + ';end';
   } else {
     window.location.href = KIWOOM_APPSTORE;
   }
+}
+
+openAppBtn.addEventListener('click', launchKiwoomApp);
+
+modalName.addEventListener('click', () => {
+  const copyText = currentModalName + ' : ' + currentModalCode;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(copyText).catch(() => {});
+  }
+  if (IS_MOBILE) {
+    launchKiwoomApp();
+  }
+  modalName.textContent = copyText + ' 복사됨';
 });
 
 function openStockModal(item) {
   modalName.textContent = item.name;
+  currentModalName = item.name;
   modalPrice.textContent = fmt(item.price) + '원';
   modalRate.textContent = '+' + Number(item.rate).toFixed(2) + '%';
   currentModalCode = item.code;
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '5'));
   modalPriceBtn.onclick = () => showQuote(item.code);
-  modalBuyBtn.onclick = () => tradeWithKiwoom('buy', item.code, item.name);
-  modalSellBtn.onclick = () => tradeWithKiwoom('sell', item.code, item.name);
   modalOverlay.classList.add('open');
   showChart(item.code, '5');
 }
@@ -460,38 +471,6 @@ function renderSparkline(prices, period) {
     '<polyline points="' + points + '" fill="none" stroke="' + color + '" stroke-width="2" />' +
     '</svg>' +
     '<div class="chartRange">' + fmt(min) + '원 ~ ' + fmt(max) + '원 (' + (PERIOD_LABEL[period] || period) + ')</div>';
-}
-
-function tradeWithKiwoom(side, code, name) {
-  const label = side === 'buy' ? '매수' : '매도';
-  const btn = side === 'buy' ? modalBuyBtn : modalSellBtn;
-  const btnDefaultText = side === 'buy' ? '🛒 매수' : '💸 매도';
-
-  if (!confirm(name + ' (' + code + ') 시장가 ' + label + ' 주문을 넣을까요?\\n(모의투자/실전 여부는 서버 설정값을 따릅니다)')) {
-    return;
-  }
-  btn.disabled = true;
-  btn.textContent = '주문 처리 중...';
-
-  fetch('/api/' + side, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code })
-  })
-    .then(res => res.json())
-    .then(data => {
-      const env = data.mock ? '[모의투자]' : '[실전]';
-      if (data.ok) {
-        alert(env + ' ' + name + ' ' + data.qty + '주 ' + label + ' 주문 완료\\n주문번호: ' + (data.raw?.ord_no || '-'));
-      } else {
-        alert(env + ' 주문 실패: ' + (data.raw?.return_msg || data.error || '알 수 없는 오류'));
-      }
-    })
-    .catch(err => alert('주문 요청 중 오류: ' + err.message))
-    .finally(() => {
-      btn.disabled = false;
-      btn.textContent = btnDefaultText;
-    });
 }
 
 let latestList = [];
