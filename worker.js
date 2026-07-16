@@ -283,17 +283,25 @@ function renderDashboard() {
   .streakBoard.streak5 h2 { color:#69db7c; }
   .streakBadge { color:#ffd43b; font-size:11px; margin-left:6px; }
   #reloadBtn {
-    position:fixed; right:14px; top:50%; transform:translateY(-50%);
+    position:fixed; right:14px; top:calc(50% - 30px); transform:translateY(-50%);
     width:50px; height:50px; border-radius:50%; border:none;
     background:#ff6b6b; color:#111; font-size:22px; z-index:90;
     box-shadow:0 2px 8px rgba(0,0,0,0.4); cursor:pointer;
   }
   #reloadBtn.spinning { animation:spin 0.6s linear; }
   @keyframes spin { from{ transform:translateY(-50%) rotate(0deg); } to{ transform:translateY(-50%) rotate(360deg); } }
+  #collectBtn {
+    position:fixed; right:14px; top:calc(50% + 30px); transform:translateY(-50%);
+    width:50px; height:50px; border-radius:50%; border:none;
+    background:#69db7c; color:#111; font-size:20px; z-index:90;
+    box-shadow:0 2px 8px rgba(0,0,0,0.4); cursor:pointer;
+  }
+  #collectBtn.spinning { animation:spin 0.9s linear infinite; }
 </style>
 </head>
 <body>
-  <button id="reloadBtn" title="새로고침">🔄</button>
+  <button id="reloadBtn" title="화면 새로고침">🔄</button>
+  <button id="collectBtn" title="지금 시세 즉시 수집">⚡</button>
   <h1>🔥 급등주 스크리너</h1>
   <div class="sub" id="ts">불러오는 중...</div>
 
@@ -581,6 +589,28 @@ async function load() {
 document.getElementById('reloadBtn').addEventListener('click', (e) => {
   e.target.classList.add('spinning');
   load().finally(() => setTimeout(() => e.target.classList.remove('spinning'), 600));
+});
+
+document.getElementById('collectBtn').addEventListener('click', (e) => {
+  const btn = e.target;
+  btn.classList.add('spinning');
+  btn.disabled = true;
+  fetch('/api/run-now')
+    .then(res => res.json())
+    .then(data => {
+      if (data.saved !== undefined) {
+        return load().then(() => {
+          alert('시세 수집 완료: ' + data.saved + '종목 저장됨');
+        });
+      } else {
+        alert('수집 실패: ' + (data.error || JSON.stringify(data)));
+      }
+    })
+    .catch(err => alert('수집 요청 오류: ' + err.message))
+    .finally(() => {
+      btn.classList.remove('spinning');
+      btn.disabled = false;
+    });
 });
 
 load();
