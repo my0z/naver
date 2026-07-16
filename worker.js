@@ -247,6 +247,14 @@ function renderDashboard() {
   #modalBox h3 { margin:0 0 2px; font-size:17px; }
   #modalBox .modalSub { color:#999; font-size:13px; margin-bottom:16px; }
   #modalBox .modalSub .up { color:#ff6b6b; margin-left:6px; }
+  #modalDetail:empty { display:none; }
+  #modalDetail { margin-bottom:14px; }
+  .detailLoading, .detailError { color:#888; font-size:13px; padding:8px 0; }
+  .detailError { color:#ff8787; }
+  .detailGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; background:#151515; border-radius:10px; padding:10px 12px; font-size:12px; color:#999; }
+  .detailGrid b { display:block; font-size:14px; color:#eee; margin-top:2px; }
+  .detailGrid b.up { color:#ff6b6b; }
+  .chartRange { font-size:11px; color:#888; text-align:center; margin-top:4px; }
   .modalBtn {
     display:block; width:100%; box-sizing:border-box; text-align:center;
     padding:14px; margin-bottom:10px; border-radius:10px; border:none;
@@ -293,8 +301,9 @@ function renderDashboard() {
     <div id="modalBox">
       <h3 id="modalName">-</h3>
       <div class="modalSub"><span id="modalPrice">-</span><span class="up" id="modalRate">-</span></div>
-      <a class="modalBtn chart" id="modalChartLink" target="_blank" rel="noopener">📊 종목 보기 (차트)</a>
-      <a class="modalBtn price" id="modalPriceLink" target="_blank" rel="noopener">💰 현재가·호가 보기</a>
+      <div id="modalDetail"></div>
+      <button class="modalBtn chart" id="modalChartBtn">📊 차트 보기</button>
+      <button class="modalBtn price" id="modalPriceBtn">💰 현재가 새로고침</button>
       <button class="modalBtn buy" id="modalBuyBtn">🛒 매수</button>
       <button class="modalBtn sell" id="modalSellBtn">💸 매도</button>
       <button class="modalBtn cancel" id="modalCancelBtn">닫기</button>
@@ -309,8 +318,9 @@ const modalOverlay = document.getElementById('modalOverlay');
 const modalName = document.getElementById('modalName');
 const modalPrice = document.getElementById('modalPrice');
 const modalRate = document.getElementById('modalRate');
-const modalChartLink = document.getElementById('modalChartLink');
-const modalPriceLink = document.getElementById('modalPriceLink');
+const modalDetail = document.getElementById('modalDetail');
+const modalChartBtn = document.getElementById('modalChartBtn');
+const modalPriceBtn = document.getElementById('modalPriceBtn');
 const modalBuyBtn = document.getElementById('modalBuyBtn');
 const modalSellBtn = document.getElementById('modalSellBtn');
 const modalCancelBtn = document.getElementById('modalCancelBtn');
@@ -319,8 +329,9 @@ function openStockModal(item) {
   modalName.textContent = item.name;
   modalPrice.textContent = fmt(item.price) + '원';
   modalRate.textContent = '+' + Number(item.rate).toFixed(2) + '%';
-  modalChartLink.href = 'https://m.stock.naver.com/domestic/stock/' + item.code + '/total';
-  modalPriceLink.href = 'https://finance.naver.com/item/main.naver?code=' + item.code;
+  modalDetail.innerHTML = '';
+  modalChartBtn.onclick = () => showChart(item.code);
+  modalPriceBtn.onclick = () => showQuote(item.code);
   modalBuyBtn.onclick = () => tradeWithKiwoom('buy', item.code, item.name);
   modalSellBtn.onclick = () => tradeWithKiwoom('sell', item.code, item.name);
   modalOverlay.classList.add('open');
@@ -334,6 +345,64 @@ modalCancelBtn.addEventListener('click', closeStockModal);
 modalOverlay.addEventListener('click', (e) => {
   if (e.target === modalOverlay) closeStockModal();
 });
+
+function showQuote(code) {
+  modalDetail.innerHTML = '<div class="detailLoading">불러오는 중...</div>';
+  fetch('/api/quote?code=' + code)
+    .then(res => res.json())
+    .then(data => {
+      if (!data.ok) {
+        modalDetail.innerHTML = '<div class="detailError">조회 실패: ' + (data.error || '알 수 없는 오류') + '</div>';
+        return;
+      }
+      modalDetail.innerHTML =
+        '<div class="detailGrid">' +
+        '<div>현재가<b>' + fmt(data.price) + '원</b></div>' +
+        '<div>등락률<b class="up">' + data.rate.toFixed(2) + '%</b></div>' +
+        '<div>시가<b>' + fmt(data.open) + '원</b></div>' +
+        '<div>고가<b>' + fmt(data.high) + '원</b></div>' +
+        '<div>저가<b>' + fmt(data.low) + '원</b></div>' +
+        '<div>거래량<b>' + fmt(data.volume) + '</b></div>' +
+        '</div>';
+    })
+    .catch(err => {
+      modalDetail.innerHTML = '<div class="detailError">조회 요청 오류: ' + err.message + '</div>';
+    });
+}
+
+function showChart(code) {
+  modalDetail.innerHTML = '<div class="detailLoading">차트 불러오는 중...</div>';
+  fetch('/api/chart?code=' + code)
+    .then(res => res.json())
+    .then(data => {
+      if (!data.ok || !data.prices || data.prices.length < 2) {
+        modalDetail.innerHTML = '<div class="detailError">차트 데이터 없음' + (data.error ? (': ' + data.error) : '') + '</div>';
+        return;
+      }
+      modalDetail.innerHTML = renderSparkline(data.prices);
+    })
+    .catch(err => {
+      modalDetail.innerHTML = '<div class="detailError">차트 요청 오류: ' + err.message + '</div>';
+    });
+}
+
+function renderSparkline(prices) {
+  const w = 340, h = 120, pad = 6;
+  const min = Math.min(...prices), max = Math.max(...prices);
+  const range = (max - min) || 1;
+  const stepX = (w - pad * 2) / (prices.length - 1);
+  const points = prices.map((p, i) => {
+    const x = pad + i * stepX;
+    const y = h - pad - ((p - min) / range) * (h - pad * 2);
+    return x.toFixed(1) + ',' + y.toFixed(1);
+  }).join(' ');
+  const up = prices[prices.length - 1] >= prices[0];
+  const color = up ? '#ff6b6b' : '#4d9fff';
+  return '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h + '">' +
+    '<polyline points="' + points + '" fill="none" stroke="' + color + '" stroke-width="2" />' +
+    '</svg>' +
+    '<div class="chartRange">' + fmt(min) + '원 ~ ' + fmt(max) + '원 (5분봉)</div>';
+}
 
 function tradeWithKiwoom(side, code, name) {
   const label = side === 'buy' ? '매수' : '매도';
@@ -516,6 +585,80 @@ async function kiwoomSellOrder(env, code) {
   return { ok: res.ok && data.return_code === 0, qty, mock: env.KIWOOM_MOCK !== "false", raw: data };
 }
 
+// ---------- 키움 REST API: 현재가(시세표성정보) ----------
+async function kiwoomQuote(env, token, code) {
+  const res = await fetch(`${kiwoomHost(env)}/api/dostk/mrkcond`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json;charset=UTF-8",
+      authorization: `Bearer ${token}`,
+      "cont-yn": "N",
+      "next-key": "",
+      "api-id": "ka10007", // 시세표성정보요청
+    },
+    body: JSON.stringify({ stk_cd: code }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.return_code !== 0) {
+    throw new Error(`ka10007 실패(code=${code}): ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
+function abs(v) {
+  return Math.abs(parseInt(String(v ?? "0").replace(/[^\d-]/g, ""), 10)) || 0;
+}
+
+function parseKiwoomQuote(json) {
+  return {
+    price: abs(json.cur_prc),
+    rate: parseFloat(json.flu_rt ?? "0") || 0,
+    open: abs(json.open_pric),
+    high: abs(json.high_pric),
+    low: abs(json.low_pric),
+    volume: abs(json.trde_qty ?? json.now_trde_qty),
+    raw: json,
+  };
+}
+
+// ---------- 키움 REST API: 분봉 차트 ----------
+async function kiwoomMinuteChart(env, token, code, ticScope) {
+  const res = await fetch(`${kiwoomHost(env)}/api/dostk/chart`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json;charset=UTF-8",
+      authorization: `Bearer ${token}`,
+      "cont-yn": "N",
+      "next-key": "",
+      "api-id": "ka10080", // 주식분봉차트조회요청
+    },
+    body: JSON.stringify({
+      stk_cd: code,
+      tic_scope: ticScope, // 1:1분봉, 5:5분봉 ...
+      upd_stkpc_tp: "1", // 수정주가 적용
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.return_code !== 0) {
+    throw new Error(`ka10080 실패(code=${code}): ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
+function parseKiwoomChart(json) {
+  let rows = [];
+  for (const key of Object.keys(json)) {
+    if (Array.isArray(json[key])) {
+      rows = json[key];
+      break;
+    }
+  }
+  return rows
+    .map((row) => abs(row.cur_prc ?? row.close_pric))
+    .filter((v) => v > 0)
+    .reverse(); // 응답이 최신순이면 시간순으로 뒤집기
+}
+
 // ---------- 디버그: 키움 ka10027 응답이 실제로 어떻게 오는지 확인 ----------
 async function debugFetch(env) {
   const out = {};
@@ -579,9 +722,56 @@ export default {
         }
       }
 
+      if (url.pathname === "/api/quote") {
+        try {
+          const code = url.searchParams.get("code");
+          if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
+          const token = await kiwoomIssueToken(env);
+          const raw = await kiwoomQuote(env, token, code);
+          return Response.json({ ok: true, ...parseKiwoomQuote(raw) });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/chart") {
+        try {
+          const code = url.searchParams.get("code");
+          if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
+          const token = await kiwoomIssueToken(env);
+          const raw = await kiwoomMinuteChart(env, token, code, "5");
+          const prices = parseKiwoomChart(raw);
+          return Response.json({ ok: true, prices });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
       if (url.pathname === "/api/debug") {
         const result = await debugFetch(env);
         return Response.json(result);
+      }
+
+      if (url.pathname === "/api/debug-quote") {
+        try {
+          const code = url.searchParams.get("code") || "005930";
+          const token = await kiwoomIssueToken(env);
+          const raw = await kiwoomQuote(env, token, code);
+          return Response.json({ ok: true, rawKeys: Object.keys(raw), raw });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/debug-chart") {
+        try {
+          const code = url.searchParams.get("code") || "005930";
+          const token = await kiwoomIssueToken(env);
+          const raw = await kiwoomMinuteChart(env, token, code, "5");
+          return Response.json({ ok: true, rawKeys: Object.keys(raw), rawSample: JSON.stringify(raw).slice(0, 1500) });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
       }
 
       if (url.pathname === "/api/run-now") {
