@@ -248,7 +248,6 @@ function renderDashboard() {
   .clickableName { cursor:pointer; text-decoration:underline dotted; }
   .clickableName:active { opacity:0.6; }
   .modalHeadRow { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-  .openAppBtn { background:#2a2a2a; color:#69db7c; border:none; border-radius:8px; padding:6px 10px; font-size:11px; white-space:nowrap; cursor:pointer; }
   #modalBox .modalSub { color:#999; font-size:13px; margin-bottom:16px; }
   #modalBox .modalSub .up { color:#ff6b6b; margin-left:6px; }
   #modalDetail:empty { display:none; }
@@ -283,9 +282,18 @@ function renderDashboard() {
   .streakBoard h2 { color:#ffd43b; }
   .streakBoard.streak5 h2 { color:#69db7c; }
   .streakBadge { color:#ffd43b; font-size:11px; margin-left:6px; }
+  #reloadBtn {
+    position:fixed; right:14px; top:50%; transform:translateY(-50%);
+    width:50px; height:50px; border-radius:50%; border:none;
+    background:#ff6b6b; color:#111; font-size:22px; z-index:90;
+    box-shadow:0 2px 8px rgba(0,0,0,0.4); cursor:pointer;
+  }
+  #reloadBtn.spinning { animation:spin 0.6s linear; }
+  @keyframes spin { from{ transform:translateY(-50%) rotate(0deg); } to{ transform:translateY(-50%) rotate(360deg); } }
 </style>
 </head>
 <body>
+  <button id="reloadBtn" title="새로고침">🔄</button>
   <h1>🔥 급등주 스크리너</h1>
   <div class="sub" id="ts">불러오는 중...</div>
 
@@ -323,7 +331,6 @@ function renderDashboard() {
     <div id="modalBox">
       <div class="modalHeadRow">
         <h3 id="modalName">-</h3>
-        <button class="openAppBtn" id="openAppBtn" style="display:none;">📲 키움 앱에서 열기</button>
       </div>
       <div id="modalCodeBadge" class="clickableName">코드: -</div>
       <div class="modalSub"><span id="modalPrice">-</span><span class="up" id="modalRate">-</span></div>
@@ -358,12 +365,9 @@ const modalPriceBtn = document.getElementById('modalPriceBtn');
 const modalCancelBtn = document.getElementById('modalCancelBtn');
 let currentModalCode = null;
 let currentModalName = null;
-const openAppBtn = document.getElementById('openAppBtn');
 const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const KIWOOM_ANDROID_PACKAGE = 'com.kiwoom.heromts';
 const KIWOOM_APPSTORE = 'https://apps.apple.com/kr/app/id1570370057';
-
-if (IS_MOBILE) openAppBtn.style.display = '';
 
 function launchKiwoomApp() {
   if (/Android/i.test(navigator.userAgent)) {
@@ -372,8 +376,6 @@ function launchKiwoomApp() {
     window.location.href = KIWOOM_APPSTORE;
   }
 }
-
-openAppBtn.addEventListener('click', launchKiwoomApp);
 
 modalCodeBadge.addEventListener('click', () => {
   if (IS_MOBILE) launchKiwoomApp();
@@ -575,6 +577,11 @@ async function load() {
     });
   });
 }
+
+document.getElementById('reloadBtn').addEventListener('click', (e) => {
+  e.target.classList.add('spinning');
+  load().finally(() => setTimeout(() => e.target.classList.remove('spinning'), 600));
+});
 
 load();
 setInterval(load, 60000); // 1분마다 화면 갱신 (저장 자체는 cron이 5분마다)
