@@ -235,8 +235,16 @@ function renderDashboard() {
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>급등주 스크리너 (5~15%)</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#111111">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="급등주">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
 <style>
   body { font-family: -apple-system, sans-serif; background:#111; color:#eee; margin:0; padding:16px; }
   h1 { font-size:18px; margin:0 0 4px; }
@@ -681,6 +689,10 @@ document.getElementById('collectBtn').addEventListener('click', (e) => {
 
 load();
 setInterval(load, 60000); // 1분마다 화면 갱신 (저장 자체는 cron이 3분마다)
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
 </script>
 </body>
 </html>`;
@@ -899,6 +911,43 @@ export default {
     const url = new URL(request.url);
 
     try {
+      if (url.pathname === "/manifest.json") {
+        return Response.json({
+          name: "급등주 스크리너",
+          short_name: "급등주",
+          description: "5~15% 상승 종목 실시간 스크리너",
+          start_url: "/",
+          scope: "/",
+          display: "standalone",
+          orientation: "portrait",
+          background_color: "#111111",
+          theme_color: "#111111",
+          icons: [
+            { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+            { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
+          ],
+        });
+      }
+
+      if (url.pathname === "/icon.svg") {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect width="100" height="100" rx="20" fill="#111111"/>
+  <text x="50" y="66" font-size="58" text-anchor="middle">🔥</text>
+</svg>`;
+        return new Response(svg, { headers: { "content-type": "image/svg+xml" } });
+      }
+
+      if (url.pathname === "/sw.js") {
+        const sw = `
+self.addEventListener('install', (e) => { self.skipWaiting(); });
+self.addEventListener('activate', (e) => { self.clients.claim(); });
+self.addEventListener('fetch', (e) => {
+  // 네트워크 우선, 실패 시 그대로 실패 반환 (실시간 데이터라 캐싱 안 함)
+  e.respondWith(fetch(e.request).catch(() => new Response('오프라인 상태입니다', { status: 503 })));
+});`;
+        return new Response(sw, { headers: { "content-type": "application/javascript" } });
+      }
+
       if (url.pathname === "/api/latest") {
         const data = await getLatest(env);
         return Response.json(data);
