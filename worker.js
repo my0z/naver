@@ -398,15 +398,18 @@ const modalCancelBtn = document.getElementById('modalCancelBtn');
 let currentModalCode = null;
 let currentModalName = null;
 const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-const KIWOOM_ANDROID_PACKAGE = 'com.kiwoom.heromts';
+const KIWOOM_SCHEME_URL = 'heromts://heromtshost';
+const KIWOOM_PLAYSTORE = 'https://play.google.com/store/apps/details?id=com.kiwoom.heromts';
 const KIWOOM_APPSTORE = 'https://apps.apple.com/kr/app/id1570370057';
 
 function launchKiwoomApp() {
-  if (/Android/i.test(navigator.userAgent)) {
-    window.location.href = 'intent://#Intent;package=' + KIWOOM_ANDROID_PACKAGE + ';end';
-  } else {
-    window.location.href = KIWOOM_APPSTORE;
-  }
+  // 실제 등록된 커스텀 스킴으로 바로 실행 (플레이스토어 경유 없음)
+  window.location.href = KIWOOM_SCHEME_URL;
+  // 스킴으로 안 열렸을 경우(앱 미설치 등) 잠시 후 스토어로 안내
+  setTimeout(() => {
+    if (document.hidden) return; // 이미 앱으로 전환됐으면 아무것도 안 함
+    window.location.href = /Android/i.test(navigator.userAgent) ? KIWOOM_PLAYSTORE : KIWOOM_APPSTORE;
+  }, 1200);
 }
 
 modalCodeBadge.addEventListener('click', () => {
