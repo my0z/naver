@@ -557,9 +557,10 @@ function renderOrderBook(buyReq, selReq) {
 function renderNewsLinks(name) {
   const el = document.getElementById('modalNewsLinks');
   const q = encodeURIComponent(name);
+  const dartQ = encodeURIComponent(name + ' 공시 dart');
   el.innerHTML =
     '<a class="newsLink" href="https://search.naver.com/search.naver?where=news&query=' + q + '" target="_blank" rel="noopener">📰 뉴스 검색</a>' +
-    '<a class="newsLink" href="https://dart.fss.or.kr/dsab002/search.ax?textCrpCik=&textCrpNm=' + q + '" target="_blank" rel="noopener">📋 DART 공시</a>';
+    '<a class="newsLink" href="https://search.naver.com/search.naver?query=' + dartQ + '" target="_blank" rel="noopener">📋 DART 공시</a>';
 }
 
 function showQuote(code) {
