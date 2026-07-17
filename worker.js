@@ -577,7 +577,44 @@ function renderCurrentWindow() {
   if (!chartFullPrices.length) return;
   clampChartWindow();
   const slice = getVisibleSlice();
-  modalDetail.innerHTML = renderSparkline(slice, currentModalPeriod, chartWindowSize < chartFullPrices.length);
+  updateChartDOM(slice, currentModalPeriod, chartWindowSize < chartFullPrices.length);
+}
+
+// 드래그/핀치 중에는 DOM을 통째로 갈아끼우지 않고 기존 svg의 좌표만 갱신
+// (모바일 터치는 원래 터치한 요소가 사라지면 이후 touchmove가 안 들어옴 -> PC에서만 되던 버그의 원인)
+function updateChartDOM(prices, period, isZoomed) {
+  const existingWrap = modalDetail.querySelector('#chartWrap');
+  if (!existingWrap) {
+    // 최초 렌더(새 종목/기간/차트 첫 표시)일 때만 전체 새로 그림
+    modalDetail.innerHTML = renderSparkline(prices, period, isZoomed);
+    return;
+  }
+
+  const w = 340, h = 120, pad = 6;
+  const min = Math.min(...prices), max = Math.max(...prices);
+  const range = (max - min) || 1;
+  const stepX = prices.length > 1 ? (w - pad * 2) / (prices.length - 1) : 0;
+  const points = prices.map((p, i) => {
+    const x = pad + i * stepX;
+    const y = h - pad - ((p - min) / range) * (h - pad * 2);
+    return x.toFixed(1) + ',' + y.toFixed(1);
+  }).join(' ');
+  const up = prices[prices.length - 1] >= prices[0];
+
+  const polyline = existingWrap.querySelector('polyline');
+  if (polyline) {
+    polyline.setAttribute('points', points);
+    polyline.setAttribute('stroke', up ? '#ff6b6b' : '#4d9fff');
+  }
+
+  const rangeDiv = modalDetail.querySelector('.chartRange');
+  if (rangeDiv) {
+    const now = new Date().toLocaleTimeString('ko-KR');
+    rangeDiv.innerHTML = fmt(min) + '원 ~ ' + fmt(max) + '원 (' + (PERIOD_LABEL[period] || period) +
+      (isZoomed ? ' · ' + prices.length + '개 구간 확대중' : '') + ')' +
+      ' <span class="liveDot">●</span> 실시간 · ' + now +
+      (isZoomed ? ' · <span class="chartResetBtn" id="chartResetBtn">전체보기</span>' : '');
+  }
 }
 
 function touchDist(touches) {
