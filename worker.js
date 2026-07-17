@@ -1212,39 +1212,48 @@ async function scanPatternMatches(env, candidates) {
   const token = await kiwoomIssueToken(env);
   const todayStr = todayYYYYMMDD();
   const results = [];
+  const debugInfo = [];
 
   for (const c of candidates) {
+    const dbg = { code: c.code, name: c.name, todayStr };
     try {
       const raw = await kiwoomChart(env, token, c.code, "5");
       const rows = parseKiwoomMinuteHistory(raw);
       const byDate = groupByDate(rows);
+      dbg.availableDates = Object.keys(byDate);
       const todayRows = byDate[todayStr];
+      dbg.todayRowCount = todayRows ? todayRows.length : 0;
 
       if (todayRows && todayRows.length >= 4) {
         const todaySeries = normalizeSeries(todayRows.map((r) => r.price));
         let best = null;
+        let comparedDays = 0;
         for (const d of Object.keys(byDate)) {
           if (d === todayStr) continue;
           const histRows = byDate[d];
           if (histRows.length < todaySeries.length) continue; // 오늘 진행분만큼 데이터 없는 날은 제외
+          comparedDays++;
           const histSeries = normalizeSeries(histRows.slice(0, todaySeries.length).map((r) => r.price));
           const score = pearsonCorrelation(todaySeries, histSeries);
           if (score !== null && (!best || score > best.score)) {
             best = { date: d, score };
           }
         }
+        dbg.comparedDays = comparedDays;
         if (best) {
+          dbg.bestScore = best.score;
           results.push({ code: c.code, name: c.name, matchDate: best.date, score: best.score });
         }
       }
     } catch (e) {
-      // 개별 종목 조회 실패는 건너뛰고 계속 진행
+      dbg.error = String(e.message || e);
     }
+    debugInfo.push(dbg);
     await sleep(1100); // ka10080 초당 1건 제한
   }
 
   results.sort((a, b) => b.score - a.score);
-  return results;
+  return { results, debugInfo };
 }
 
 // ---------- 디버그: 키움 ka10027 응답이 실제로 어떻게 오는지 확인 ----------
@@ -1431,8 +1440,14 @@ self.addEventListener('fetch', (e) => {
             .bind(times[0])
             .all();
           const candidates = candRes.results;
-          const results = await scanPatternMatches(env, candidates);
-          return Response.json({ ok: true, scanned: candidates.length, results });
+          const { results, debugInfo } = await scanPatternMatches(env, candidates);
+          return Response.json({
+            ok: true,
+            scanned: candidates.length,
+            latestSnapshotAt: times[0],
+            results,
+            debugInfo,
+          });
         } catch (e) {
           return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
         }
