@@ -344,9 +344,11 @@ function renderDashboard() {
   <div class="board">
     <div class="boardHeadRow">
       <h2>전체 목록 (등락률 5~15%)</h2>
+      <div class="sub" style="margin:0 0 8px;">⚠️ '종합점수'는 여러 지표를 임의로 조합한 참고용 순위이며 수익을 보장하지 않습니다</div>
       <div class="sortToggle">
+        <button class="sortBtn active" id="sortByMomentum">종합점수순</button>
         <button class="sortBtn" id="sortByRate">등락률순</button>
-        <button class="sortBtn active" id="sortByVolumeDesc">거래량 많은순</button>
+        <button class="sortBtn" id="sortByVolumeDesc">거래량 많은순</button>
         <button class="sortBtn" id="sortByVolumeAsc">거래량 적은순</button>
         <button class="sortBtn" id="sortByCntrStr">체결강도순</button>
       </div>
@@ -507,13 +509,35 @@ function renderSparkline(prices, period) {
 
 let latestList = [];
 let byCodeMap = {};
-let currentSort = 'volumeDesc';
+let currentSort = 'momentum';
+
+function computeMomentumScores(latest, streak3Codes, streak5Codes) {
+  if (!latest.length) return;
+  const rates = latest.map(r => r.change_rate);
+  const cntrs = latest.map(r => r.cntr_str || 0);
+  const vols = latest.map(r => Math.log((r.volume || 0) + 1));
+  const norm = (v, min, max) => (max > min ? (v - min) / (max - min) : 0.5);
+  const rMin = Math.min(...rates), rMax = Math.max(...rates);
+  const cMin = Math.min(...cntrs), cMax = Math.max(...cntrs);
+  const vMin = Math.min(...vols), vMax = Math.max(...vols);
+
+  latest.forEach(r => {
+    let score =
+      norm(r.change_rate, rMin, rMax) * 0.25 +
+      norm(r.cntr_str || 0, cMin, cMax) * 0.35 +
+      norm(Math.log((r.volume || 0) + 1), vMin, vMax) * 0.20;
+    if (streak3Codes.has(r.code)) score += 0.10;
+    if (streak5Codes.has(r.code)) score += 0.15;
+    r.momentumScore = score;
+  });
+}
 
 function renderAllTable() {
   const sorted = [...latestList].sort((a, b) =>
     currentSort === 'volumeDesc' ? b.volume - a.volume
     : currentSort === 'volumeAsc' ? a.volume - b.volume
     : currentSort === 'cntrStr' ? (b.cntr_str || 0) - (a.cntr_str || 0)
+    : currentSort === 'momentum' ? (b.momentumScore || 0) - (a.momentumScore || 0)
     : b.change_rate - a.change_rate
   );
   const allBody = document.querySelector('#all tbody');
@@ -535,6 +559,12 @@ function renderAllTable() {
   });
 }
 
+document.getElementById('sortByMomentum').addEventListener('click', (e) => {
+  currentSort = 'momentum';
+  document.querySelectorAll('.sortBtn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  renderAllTable();
+});
 document.getElementById('sortByRate').addEventListener('click', (e) => {
   currentSort = 'rate';
   document.querySelectorAll('.sortBtn').forEach(b => b.classList.remove('active'));
@@ -599,6 +629,9 @@ async function load() {
     : '<tr><td class="empty">직전 스냅샷 대비 상승 종목 없음</td></tr>';
 
   latestList = data.latest;
+  const streak3Codes = new Set(data.streak3.map(r => r.code));
+  const streak5Codes = new Set(data.streak5.map(r => r.code));
+  computeMomentumScores(latestList, streak3Codes, streak5Codes);
 
   // 클릭용 종목 정보 매핑 (streak5 + streak3 + top5 + all 합쳐서)
   byCodeMap = {};
