@@ -279,6 +279,20 @@ function renderDashboard() {
   #modalBox .modalSub { color:#999; font-size:13px; margin-bottom:16px; }
   #modalBox .modalSub .up { color:#ff6b6b; margin-left:6px; }
   #modalDetail:empty { display:none; }
+  #modalOrderBook { margin-bottom:12px; }
+  .orderBookBar { display:flex; height:10px; border-radius:5px; overflow:hidden; background:#151515; }
+  .orderBookBuy { background:#ff6b6b; }
+  .orderBookSell { background:#4d9fff; }
+  .orderBookLabel { display:flex; justify-content:space-between; font-size:11px; color:#888; margin-top:4px; }
+  .orderBookLabel .buyLabel { color:#ff6b6b; }
+  .orderBookLabel .sellLabel { color:#4d9fff; }
+  #modalNewsLinks { display:flex; gap:8px; margin-bottom:12px; }
+  .newsLink {
+    flex:1; text-align:center; padding:8px 6px; border-radius:8px;
+    background:#2a2a2a; color:#aaa; font-size:12px; text-decoration:none;
+  }
+  .highGap { font-size:11px; color:#888; margin-top:2px; }
+  .highGap b { color:#ffa94d; }
   #modalDetail { margin-bottom:14px; }
   .detailLoading, .detailError { color:#888; font-size:13px; padding:8px 0; }
   .detailError { color:#ff8787; }
@@ -399,6 +413,8 @@ function renderDashboard() {
       </div>
       <div id="modalCodeBadge" class="clickableName">코드: -</div>
       <div class="modalSub"><span id="modalPrice">-</span><span class="up" id="modalRate">-</span></div>
+      <div id="modalOrderBook"></div>
+      <div id="modalNewsLinks"></div>
       <div id="modalDetail"></div>
       <div class="periodRow" id="periodRow">
         <button class="periodBtn" data-period="T">틱</button>
@@ -464,6 +480,8 @@ function openStockModal(item) {
   modalCodeBadge.textContent = '코드: ' + item.code + ' (복사됨)';
   modalPrice.textContent = fmt(item.price) + '원';
   modalRate.textContent = '+' + Number(item.rate).toFixed(2) + '%';
+  renderOrderBook(item.buyReq, item.selReq);
+  renderNewsLinks(item.name);
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '5'));
   modalPriceBtn.onclick = () => showQuote(item.code);
   modalOverlay.classList.add('open');
@@ -519,6 +537,31 @@ modalOverlay.addEventListener('click', (e) => {
   if (e.target === modalOverlay) closeStockModal();
 });
 
+function renderOrderBook(buyReq, selReq) {
+  const el = document.getElementById('modalOrderBook');
+  const total = (buyReq || 0) + (selReq || 0);
+  if (!total) { el.innerHTML = ''; return; }
+  const buyPct = (buyReq / total * 100).toFixed(1);
+  const sellPct = (100 - buyPct).toFixed(1);
+  el.innerHTML =
+    '<div class="orderBookBar">' +
+      '<div class="orderBookBuy" style="width:' + buyPct + '%"></div>' +
+      '<div class="orderBookSell" style="width:' + sellPct + '%"></div>' +
+    '</div>' +
+    '<div class="orderBookLabel">' +
+      '<span class="buyLabel">매수잔량 ' + fmt(buyReq) + ' (' + buyPct + '%)</span>' +
+      '<span class="sellLabel">매도잔량 ' + fmt(selReq) + ' (' + sellPct + '%)</span>' +
+    '</div>';
+}
+
+function renderNewsLinks(name) {
+  const el = document.getElementById('modalNewsLinks');
+  const q = encodeURIComponent(name);
+  el.innerHTML =
+    '<a class="newsLink" href="https://search.naver.com/search.naver?where=news&query=' + q + '" target="_blank" rel="noopener">📰 뉴스 검색</a>' +
+    '<a class="newsLink" href="https://dart.fss.or.kr/dsab002/search.ax?textCrpCik=&textCrpNm=' + q + '" target="_blank" rel="noopener">📋 DART 공시</a>';
+}
+
 function showQuote(code) {
   modalDetail.innerHTML = '<div class="detailLoading">불러오는 중...</div>';
   fetch('/api/quote?code=' + code)
@@ -528,6 +571,7 @@ function showQuote(code) {
         modalDetail.innerHTML = '<div class="detailError">조회 실패: ' + (data.error || '알 수 없는 오류') + '</div>';
         return;
       }
+      const gapFromHigh = data.high ? (((data.price - data.high) / data.high) * 100).toFixed(2) : '0.00';
       modalDetail.innerHTML =
         '<div class="detailGrid">' +
         '<div>현재가<b>' + fmt(data.price) + '원</b></div>' +
@@ -536,7 +580,8 @@ function showQuote(code) {
         '<div>고가<b>' + fmt(data.high) + '원</b></div>' +
         '<div>저가<b>' + fmt(data.low) + '원</b></div>' +
         '<div>거래량<b>' + fmt(data.volume) + '</b></div>' +
-        '</div>';
+        '</div>' +
+        '<div class="highGap">오늘 고점 대비 <b>' + gapFromHigh + '%</b></div>';
     })
     .catch(err => {
       modalDetail.innerHTML = '<div class="detailError">조회 요청 오류: ' + err.message + '</div>';
@@ -860,7 +905,10 @@ async function load() {
   // 클릭용 종목 정보 매핑 (streak5 + streak3 + top5 + all 합쳐서)
   byCodeMap = {};
   [...data.streak5, ...data.streak3, ...data.risingTop5, ...data.latest].forEach(r => {
-    byCodeMap[r.code] = { code: r.code, name: r.name, price: r.price, rate: r.change_rate };
+    byCodeMap[r.code] = {
+      code: r.code, name: r.name, price: r.price, rate: r.change_rate,
+      buyReq: r.buy_req || 0, selReq: r.sel_req || 0,
+    };
   });
 
   renderAllTable();
