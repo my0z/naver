@@ -11,7 +11,8 @@
  * - KIWOOM_APP_KEY / KIWOOM_APP_SECRET 시크릿 필요 (Cloudflare 대시보드에서 Secret으로 등록)
  *
  * Cron (UTC 기준, 평일 KST 09:01~15:15 커버):
- *   3분 간격으로 실행 (UTC 0-6시 범위, 실제 경계는 isMarketHoursKST()에서 처리)
+ *   2분 간격으로 실행 (UTC 0-6시 범위, 실제 경계는 isMarketHoursKST()에서 처리)
+ *   (키움 TR 초당1건 제한에는 여유있게 안 걸림. D1 무료플랜 일 5만건 쓰기 제한 감안한 값)
  * (코드 안에서도 09:01~15:15 KST가 아니면 스킵하므로 이중 안전장치)
  */
 
@@ -386,17 +387,17 @@ function renderDashboard() {
   </div>
 
   <div class="board streakBoard streak5">
-    <h2>🚀 5연속 상승 종목 <span class="intervalTag">(3분간격)</span></h2>
+    <h2>🚀 5연속 상승 종목 <span class="intervalTag">(2분간격)</span></h2>
     <table id="streak5"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
   </div>
 
   <div class="board streakBoard">
-    <h2>⚡ 3연속 상승 종목 <span class="intervalTag">(3분간격)</span></h2>
+    <h2>⚡ 3연속 상승 종목 <span class="intervalTag">(2분간격)</span></h2>
     <table id="streak3"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
   </div>
 
   <div class="board">
-    <h2>3분 전보다 더 오른 TOP5</h2>
+    <h2>2분 전보다 더 오른 TOP5</h2>
     <table id="top5"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
   </div>
 
@@ -1049,7 +1050,7 @@ load();
 let mainRefreshTimer = setInterval(() => {
   if (document.hidden) return; // 백그라운드면 새로고침 스킵
   load();
-}, 60000); // 1분마다 화면 갱신 (저장 자체는 cron이 3분마다)
+}, 20000); // 20초마다 화면 갱신 (D1만 읽어오는 거라 키움 제한과 무관, 저장 자체는 cron이 2분마다)
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) load(); // 화면 복귀 시 즉시 최신화
