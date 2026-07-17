@@ -347,6 +347,18 @@ function renderDashboard() {
   <h1>🔥 급등주 스크리너</h1>
   <div class="sub" id="ts">불러오는 중...</div>
 
+  <div class="board">
+    <div class="boardHeadRow">
+      <h2>🔍 지난 1주일 패턴 유사 종목</h2>
+      <button id="patternScanBtn" class="sortBtn">스캔 시작</button>
+    </div>
+    <div class="sub" style="margin:0 0 8px;">오늘 거래량 상위 15종목의 장중 흐름을 지난 1주일과 비교합니다 (20~30초 소요, 참고용 · 매수 신호 아님)</div>
+    <table id="patternScan">
+      <thead><tr><th>종목</th><th>유사한 날</th><th>유사도</th></tr></thead>
+      <tbody><tr><td class="empty">스캔 시작 버튼을 눌러주세요</td></tr></tbody>
+    </table>
+  </div>
+
   <div class="board streakBoard streak5">
     <h2>🚀 5연속 상승 종목 <span class="intervalTag">(3분간격)</span></h2>
     <table id="streak5"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
@@ -829,6 +841,50 @@ document.getElementById('reloadBtn').addEventListener('click', (e) => {
   load().finally(() => setTimeout(() => e.target.classList.remove('spinning'), 600));
 });
 
+document.getElementById('patternScanBtn').addEventListener('click', (e) => {
+  const btn = e.target;
+  const tbody = document.querySelector('#patternScan tbody');
+  btn.disabled = true;
+  btn.textContent = '스캔 중...';
+  tbody.innerHTML = '<tr><td class="empty">지난 1주일 데이터와 비교 중... (20~30초 소요)</td></tr>';
+
+  fetch('/api/pattern-scan')
+    .then(res => res.json())
+    .then(data => {
+      if (!data.ok) {
+        tbody.innerHTML = '<tr><td class="empty">스캔 실패: ' + (data.error || '알 수 없는 오류') + '</td></tr>';
+        return;
+      }
+      const results = data.results.filter(r => r.score >= 0.5);
+      tbody.innerHTML = results.length
+        ? results.map(r => {
+            const d = r.matchDate;
+            const dateLabel = d.slice(4,6) + '/' + d.slice(6,8);
+            const pct = (r.score * 100).toFixed(1);
+            return '<tr class="clickable" data-code="' + r.code + '">' +
+              '<td>' + r.name + '</td>' +
+              '<td>' + dateLabel + '</td>' +
+              '<td class="' + (r.score >= 0.8 ? 'up' : '') + '">' + pct + '%</td>' +
+            '</tr>';
+          }).join('')
+        : '<tr><td class="empty">유사도 50% 이상인 종목 없음 (' + data.scanned + '종목 스캔)</td></tr>';
+
+      tbody.querySelectorAll('tr.clickable').forEach(tr => {
+        tr.addEventListener('click', () => {
+          const item = byCodeMap[tr.dataset.code];
+          if (item) openStockModal(item);
+        });
+      });
+    })
+    .catch(err => {
+      tbody.innerHTML = '<tr><td class="empty">스캔 요청 오류: ' + err.message + '</td></tr>';
+    })
+    .finally(() => {
+      btn.disabled = false;
+      btn.textContent = '스캔 시작';
+    });
+});
+
 document.getElementById('collectBtn').addEventListener('click', (e) => {
   const btn = e.target;
   btn.classList.add('spinning');
@@ -1097,6 +1153,100 @@ function parseKiwoomChart(json) {
     .reverse(); // 응답이 최신순이면 시간순으로 뒤집기
 }
 
+// ---------- 오늘 vs 지난 1주일 장중 패턴 유사도 스캔 ----------
+function parseKiwoomMinuteHistory(json) {
+  let rows = [];
+  for (const key of Object.keys(json)) {
+    if (Array.isArray(json[key])) { rows = json[key]; break; }
+  }
+  return rows
+    .map((r) => {
+      const tm = r.cntr_tm || "";
+      return {
+        date: tm.slice(0, 8),
+        time: tm.slice(8, 14),
+        price: abs(r.cur_prc ?? r.close_pric),
+      };
+    })
+    .filter((r) => r.date && r.price > 0)
+    .reverse(); // 응답이 최신순 -> 시간순(과거->현재)으로 뒤집기
+}
+
+function groupByDate(rows) {
+  const map = {};
+  for (const r of rows) {
+    if (!map[r.date]) map[r.date] = [];
+    map[r.date].push(r);
+  }
+  for (const d in map) map[d].sort((a, b) => a.time.localeCompare(b.time));
+  return map;
+}
+
+// 첫 값 대비 %변화율로 정규화 (절대가격이 달라도 '모양'만 비교)
+function normalizeSeries(prices) {
+  if (!prices.length) return [];
+  const base = prices[0] || 1;
+  return prices.map((p) => ((p - base) / base) * 100);
+}
+
+// 피어슨 상관계수 (-1~1, 1에 가까울수록 모양이 비슷)
+function pearsonCorrelation(a, b) {
+  const n = Math.min(a.length, b.length);
+  if (n < 4) return null;
+  a = a.slice(0, n);
+  b = b.slice(0, n);
+  const meanA = a.reduce((s, v) => s + v, 0) / n;
+  const meanB = b.reduce((s, v) => s + v, 0) / n;
+  let num = 0, denomA = 0, denomB = 0;
+  for (let i = 0; i < n; i++) {
+    const da = a[i] - meanA, db = b[i] - meanB;
+    num += da * db;
+    denomA += da * da;
+    denomB += db * db;
+  }
+  if (denomA === 0 || denomB === 0) return null;
+  return num / Math.sqrt(denomA * denomB);
+}
+
+async function scanPatternMatches(env, candidates) {
+  const token = await kiwoomIssueToken(env);
+  const todayStr = todayYYYYMMDD();
+  const results = [];
+
+  for (const c of candidates) {
+    try {
+      const raw = await kiwoomChart(env, token, c.code, "5");
+      const rows = parseKiwoomMinuteHistory(raw);
+      const byDate = groupByDate(rows);
+      const todayRows = byDate[todayStr];
+
+      if (todayRows && todayRows.length >= 4) {
+        const todaySeries = normalizeSeries(todayRows.map((r) => r.price));
+        let best = null;
+        for (const d of Object.keys(byDate)) {
+          if (d === todayStr) continue;
+          const histRows = byDate[d];
+          if (histRows.length < todaySeries.length) continue; // 오늘 진행분만큼 데이터 없는 날은 제외
+          const histSeries = normalizeSeries(histRows.slice(0, todaySeries.length).map((r) => r.price));
+          const score = pearsonCorrelation(todaySeries, histSeries);
+          if (score !== null && (!best || score > best.score)) {
+            best = { date: d, score };
+          }
+        }
+        if (best) {
+          results.push({ code: c.code, name: c.name, matchDate: best.date, score: best.score });
+        }
+      }
+    } catch (e) {
+      // 개별 종목 조회 실패는 건너뛰고 계속 진행
+    }
+    await sleep(1100); // ka10080 초당 1건 제한
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  return results;
+}
+
 // ---------- 디버그: 키움 ka10027 응답이 실제로 어떻게 오는지 확인 ----------
 async function debugFetch(env) {
   const out = {};
@@ -1261,6 +1411,28 @@ self.addEventListener('fetch', (e) => {
             latestTm: times[0],
             rawSample: JSON.stringify(raw).slice(0, 800),
           });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/pattern-scan") {
+        try {
+          const timesRes = await env.DB.prepare(
+            `SELECT DISTINCT captured_at FROM snapshots ORDER BY captured_at DESC LIMIT 1`
+          ).all();
+          const times = timesRes.results.map((r) => r.captured_at);
+          if (times.length === 0) {
+            return Response.json({ ok: false, error: "오늘 수집된 데이터가 없습니다" });
+          }
+          const candRes = await env.DB.prepare(
+            `SELECT code, name, volume FROM snapshots WHERE captured_at = ? ORDER BY volume DESC LIMIT 15`
+          )
+            .bind(times[0])
+            .all();
+          const candidates = candRes.results;
+          const results = await scanPatternMatches(env, candidates);
+          return Response.json({ ok: true, scanned: candidates.length, results });
         } catch (e) {
           return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
         }
