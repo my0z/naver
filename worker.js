@@ -1246,7 +1246,21 @@ self.addEventListener('fetch', (e) => {
           const period = url.searchParams.get("period") || "5";
           const token = await kiwoomIssueToken(env);
           const raw = await kiwoomChart(env, token, code, period);
-          return Response.json({ ok: true, rawKeys: Object.keys(raw), rawSample: JSON.stringify(raw).slice(0, 1500) });
+          let rows = [];
+          for (const k of Object.keys(raw)) {
+            if (Array.isArray(raw[k])) { rows = raw[k]; break; }
+          }
+          const times = rows.map((r) => r.cntr_tm).filter(Boolean);
+          const dates = [...new Set(times.map((t) => t.slice(0, 8)))].sort();
+          return Response.json({
+            ok: true,
+            rawKeys: Object.keys(raw),
+            totalRows: rows.length,
+            uniqueDates: dates,
+            earliestTm: times[times.length - 1],
+            latestTm: times[0],
+            rawSample: JSON.stringify(raw).slice(0, 800),
+          });
         } catch (e) {
           return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
         }
