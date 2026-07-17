@@ -286,6 +286,12 @@ function renderDashboard() {
   .detailGrid b { display:block; font-size:14px; color:#eee; margin-top:2px; }
   .detailGrid b.up { color:#ff6b6b; }
   .chartRange { font-size:11px; color:#888; text-align:center; margin-top:4px; }
+  .liveDot { color:#69db7c; animation:blink 1.5s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{ opacity:1; } 50%{ opacity:0.2; } }
+  .chartWrap { overflow:hidden; touch-action:none; cursor:grab; border-radius:8px; background:#151515; }
+  .chartWrap:active { cursor:grabbing; }
+  .chartWrap svg { display:block; will-change:transform; }
+  .chartResetBtn { color:#4d9fff; text-decoration:underline dotted; cursor:pointer; }
   .periodRow { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
   .periodBtn {
     flex:1; min-width:40px; padding:8px 4px; border-radius:8px; border:none;
@@ -405,6 +411,9 @@ const modalPriceBtn = document.getElementById('modalPriceBtn');
 const modalCancelBtn = document.getElementById('modalCancelBtn');
 let currentModalCode = null;
 let currentModalName = null;
+let currentModalPeriod = '5';
+let chartRefreshTimer = null;
+const CHART_REFRESH_MS = 5000; // 5초마다 차트 자동 갱신
 const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const KIWOOM_SCHEME_URL = 'heromts://heromtshost';
 const KIWOOM_PLAYSTORE = 'https://play.google.com/store/apps/details?id=com.kiwoom.heromts';
@@ -431,6 +440,7 @@ function openStockModal(item) {
   }
   currentModalName = item.name;
   currentModalCode = item.code;
+  currentModalPeriod = '5';
   modalName.textContent = item.name;
   modalCodeBadge.textContent = '코드: ' + item.code + ' (복사됨)';
   modalPrice.textContent = fmt(item.price) + '원';
@@ -438,7 +448,9 @@ function openStockModal(item) {
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '5'));
   modalPriceBtn.onclick = () => showQuote(item.code);
   modalOverlay.classList.add('open');
+  chartScale = 1; chartTX = 0; chartTY = 0;
   showChart(item.code, '5');
+  startChartAutoRefresh();
 }
 
 periodRow.addEventListener('click', (e) => {
@@ -446,11 +458,33 @@ periodRow.addEventListener('click', (e) => {
   if (!btn || !currentModalCode) return;
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  showChart(currentModalCode, btn.dataset.period);
+  currentModalPeriod = btn.dataset.period;
+  chartScale = 1; chartTX = 0; chartTY = 0;
+  showChart(currentModalCode, currentModalPeriod);
+  startChartAutoRefresh(); // 기간 바뀌면 갱신 타이머 리셋
 });
+
+function startChartAutoRefresh() {
+  stopChartAutoRefresh();
+  chartRefreshTimer = setInterval(() => {
+    if (!currentModalCode || !modalOverlay.classList.contains('open')) {
+      stopChartAutoRefresh();
+      return;
+    }
+    showChart(currentModalCode, currentModalPeriod, true);
+  }, CHART_REFRESH_MS);
+}
+
+function stopChartAutoRefresh() {
+  if (chartRefreshTimer) {
+    clearInterval(chartRefreshTimer);
+    chartRefreshTimer = null;
+  }
+}
 
 function closeStockModal() {
   modalOverlay.classList.remove('open');
+  stopChartAutoRefresh();
 }
 
 modalCancelBtn.addEventListener('click', closeStockModal);
@@ -484,19 +518,109 @@ function showQuote(code) {
 
 const PERIOD_LABEL = { 'T':'틱차트', '1':'1분봉', '5':'5분봉', '15':'15분봉', '30':'30분봉', 'D':'일봉', 'W':'주봉', 'M':'월봉' };
 
-function showChart(code, period) {
-  modalDetail.innerHTML = '<div class="detailLoading">차트 불러오는 중...</div>';
+// ---------- 차트 확대/축소/드래그 ----------
+let chartScale = 1, chartTX = 0, chartTY = 0;
+let chartDragging = false, chartLastX = 0, chartLastY = 0;
+let chartPinchStartDist = 0, chartPinchStartScale = 1;
+const CHART_MIN_SCALE = 1, CHART_MAX_SCALE = 6;
+
+function chartTransformCSS() {
+  return 'transform: translate(' + chartTX + 'px,' + chartTY + 'px) scale(' + chartScale + '); transform-origin: center center; touch-action: none;';
+}
+
+function resetChartZoom() {
+  chartScale = 1; chartTX = 0; chartTY = 0;
+  applyChartTransform();
+}
+
+function applyChartTransform() {
+  const svg = modalDetail.querySelector('#chartWrap svg');
+  if (svg) svg.style.cssText = chartTransformCSS();
+}
+
+function clampChartPan() {
+  const maxOffset = (chartScale - 1) * 170; // 대략적인 경계 (차트 폭 340의 절반)
+  chartTX = Math.max(-maxOffset, Math.min(maxOffset, chartTX));
+  chartTY = Math.max(-maxOffset * 0.4, Math.min(maxOffset * 0.4, chartTY));
+}
+
+function touchDist(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+modalDetail.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('#chartWrap')) return;
+  chartDragging = true;
+  chartLastX = e.clientX;
+  chartLastY = e.clientY;
+});
+modalDetail.addEventListener('pointermove', (e) => {
+  if (!chartDragging) return;
+  chartTX += e.clientX - chartLastX;
+  chartTY += e.clientY - chartLastY;
+  chartLastX = e.clientX;
+  chartLastY = e.clientY;
+  clampChartPan();
+  applyChartTransform();
+});
+['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => {
+  modalDetail.addEventListener(ev, () => { chartDragging = false; });
+});
+
+modalDetail.addEventListener('wheel', (e) => {
+  if (!e.target.closest('#chartWrap')) return;
+  e.preventDefault();
+  chartScale = Math.max(CHART_MIN_SCALE, Math.min(CHART_MAX_SCALE, chartScale - e.deltaY * 0.002));
+  clampChartPan();
+  applyChartTransform();
+}, { passive: false });
+
+modalDetail.addEventListener('touchstart', (e) => {
+  if (!e.target.closest('#chartWrap')) return;
+  if (e.touches.length === 2) {
+    chartPinchStartDist = touchDist(e.touches);
+    chartPinchStartScale = chartScale;
+  }
+}, { passive: true });
+modalDetail.addEventListener('touchmove', (e) => {
+  if (!e.target.closest('#chartWrap')) return;
+  if (e.touches.length === 2) {
+    e.preventDefault();
+    const dist = touchDist(e.touches);
+    chartScale = Math.max(CHART_MIN_SCALE, Math.min(CHART_MAX_SCALE, chartPinchStartScale * (dist / chartPinchStartDist)));
+    clampChartPan();
+    applyChartTransform();
+  }
+}, { passive: false });
+
+modalDetail.addEventListener('dblclick', (e) => {
+  if (!e.target.closest('#chartWrap')) return;
+  resetChartZoom();
+});
+
+modalDetail.addEventListener('click', (e) => {
+  if (e.target.id === 'chartResetBtn') resetChartZoom();
+});
+
+function showChart(code, period, silent) {
+  if (!silent) modalDetail.innerHTML = '<div class="detailLoading">차트 불러오는 중...</div>';
   fetch('/api/chart?code=' + code + '&period=' + period)
     .then(res => res.json())
     .then(data => {
       if (!data.ok || !data.prices || data.prices.length < 2) {
-        modalDetail.innerHTML = '<div class="detailError">차트 데이터 없음' + (data.error ? (': ' + data.error) : '') + '</div>';
+        if (!silent) {
+          modalDetail.innerHTML = '<div class="detailError">차트 데이터 없음' + (data.error ? (': ' + data.error) : '') + '</div>';
+        }
         return;
       }
       modalDetail.innerHTML = renderSparkline(data.prices, period);
     })
     .catch(err => {
-      modalDetail.innerHTML = '<div class="detailError">차트 요청 오류: ' + err.message + '</div>';
+      if (!silent) {
+        modalDetail.innerHTML = '<div class="detailError">차트 요청 오류: ' + err.message + '</div>';
+      }
     });
 }
 
@@ -512,10 +636,14 @@ function renderSparkline(prices, period) {
   }).join(' ');
   const up = prices[prices.length - 1] >= prices[0];
   const color = up ? '#ff6b6b' : '#4d9fff';
-  return '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h + '">' +
-    '<polyline points="' + points + '" fill="none" stroke="' + color + '" stroke-width="2" />' +
+  const now = new Date().toLocaleTimeString('ko-KR');
+  return '<div class="chartWrap" id="chartWrap">' +
+    '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h + '" style="' + chartTransformCSS() + '">' +
+    '<polyline points="' + points + '" fill="none" stroke="' + color + '" stroke-width="2" vector-effect="non-scaling-stroke" />' +
     '</svg>' +
-    '<div class="chartRange">' + fmt(min) + '원 ~ ' + fmt(max) + '원 (' + (PERIOD_LABEL[period] || period) + ')</div>';
+    '</div>' +
+    '<div class="chartRange">' + fmt(min) + '원 ~ ' + fmt(max) + '원 (' + (PERIOD_LABEL[period] || period) + ')' +
+    ' <span class="liveDot">●</span> 실시간 · ' + now + ' · <span class="chartResetBtn" id="chartResetBtn">확대 초기화</span></div>';
 }
 
 let latestList = [];
@@ -705,7 +833,16 @@ function kiwoomHost(env) {
     : "https://mockapi.kiwoom.com"; // 기본값: 모의투자
 }
 
+// 토큰 캐시 (Worker 인스턴스가 살아있는 동안 재사용 -> 5초 자동갱신 차트가 매번 토큰을 새로 받지 않게 함)
+let cachedToken = null;
+let cachedTokenExpiryMs = 0;
+const TOKEN_CACHE_MS = 3 * 60 * 60 * 1000; // 3시간 (실제 유효기간보다 넉넉히 짧게 잡아 안전마진)
+
 async function kiwoomIssueToken(env) {
+  const now = Date.now();
+  if (cachedToken && now < cachedTokenExpiryMs) {
+    return cachedToken;
+  }
   const res = await fetch(`${kiwoomHost(env)}/oauth2/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json;charset=UTF-8" },
@@ -719,7 +856,9 @@ async function kiwoomIssueToken(env) {
   if (!res.ok || !data.token) {
     throw new Error(`토큰 발급 실패: ${JSON.stringify(data)}`);
   }
-  return data.token;
+  cachedToken = data.token;
+  cachedTokenExpiryMs = now + TOKEN_CACHE_MS;
+  return cachedToken;
 }
 
 async function kiwoomBuyOrder(env, code) {
