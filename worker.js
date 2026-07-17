@@ -332,11 +332,18 @@ function renderDashboard() {
     box-shadow:0 2px 8px rgba(0,0,0,0.4); cursor:pointer;
   }
   #collectBtn.spinning { animation:spin 0.9s linear infinite; }
+  #installBtn {
+    position:fixed; left:50%; bottom:16px; transform:translateX(-50%);
+    padding:10px 18px; border-radius:24px; border:none;
+    background:#4d9fff; color:#111; font-size:14px; font-weight:600; z-index:95;
+    box-shadow:0 2px 10px rgba(0,0,0,0.5); cursor:pointer; white-space:nowrap;
+  }
 </style>
 </head>
 <body>
   <button id="reloadBtn" title="화면 새로고침">🔄</button>
   <button id="collectBtn" title="지금 시세 즉시 수집">⚡</button>
+  <button id="installBtn" title="홈 화면에 추가" style="display:none;">📲 앱 설치</button>
   <h1>🔥 급등주 스크리너</h1>
   <div class="sub" id="ts">불러오는 중...</div>
 
@@ -471,6 +478,7 @@ function startChartAutoRefresh() {
       stopChartAutoRefresh();
       return;
     }
+    if (document.hidden) return; // 탭이 백그라운드면 갱신 스킵 (불필요한 API 호출 방지)
     showChart(currentModalCode, currentModalPeriod, true);
   }, CHART_REFRESH_MS);
 }
@@ -481,6 +489,13 @@ function stopChartAutoRefresh() {
     chartRefreshTimer = null;
   }
 }
+
+document.addEventListener('visibilitychange', () => {
+  // 다시 화면으로 돌아왔을 때, 모달이 열려있으면 바로 한 번 최신화
+  if (!document.hidden && currentModalCode && modalOverlay.classList.contains('open')) {
+    showChart(currentModalCode, currentModalPeriod, true);
+  }
+});
 
 function closeStockModal() {
   modalOverlay.classList.remove('open');
@@ -816,11 +831,58 @@ document.getElementById('collectBtn').addEventListener('click', (e) => {
 });
 
 load();
-setInterval(load, 60000); // 1분마다 화면 갱신 (저장 자체는 cron이 3분마다)
+let mainRefreshTimer = setInterval(() => {
+  if (document.hidden) return; // 백그라운드면 새로고침 스킵
+  load();
+}, 60000); // 1분마다 화면 갱신 (저장 자체는 cron이 3분마다)
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) load(); // 화면 복귀 시 즉시 최신화
+});
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
+
+// 홈 화면에 설치되어 standalone/fullscreen으로 실행 중일 때만 시스템 내비게이션 바 숨김 재시도
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+  || window.matchMedia('(display-mode: fullscreen)').matches
+  || window.navigator.standalone === true;
+
+if (isStandalone && document.documentElement.requestFullscreen) {
+  const tryFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+    document.removeEventListener('click', tryFullscreen);
+  };
+  document.addEventListener('click', tryFullscreen, { once: true });
+}
+
+// ---------- PWA 설치 배너: 크롬 기본 하단 배너 대신 커스텀 버튼으로 필요할 때만 노출 ----------
+let deferredInstallPrompt = null;
+const installBtn = document.getElementById('installBtn');
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault(); // 크롬이 자동으로 하단에 띄우는 기본 배너 억제
+  deferredInstallPrompt = e;
+  if (installBtn) installBtn.style.display = 'block';
+});
+
+if (installBtn) {
+  installBtn.addEventListener('click', async () => {
+    if (!deferredInstallPrompt) return;
+    installBtn.style.display = 'none';
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+  });
+}
+
+window.addEventListener('appinstalled', () => {
+  if (installBtn) installBtn.style.display = 'none';
+  deferredInstallPrompt = null;
+});
 </script>
 </body>
 </html>`;
@@ -1057,7 +1119,8 @@ export default {
           description: "5~15% 상승 종목 실시간 스크리너",
           start_url: "/",
           scope: "/",
-          display: "standalone",
+          display: "fullscreen",
+          display_override: ["fullscreen", "standalone"],
           orientation: "portrait",
           background_color: "#111111",
           theme_color: "#111111",
