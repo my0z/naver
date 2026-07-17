@@ -84,7 +84,12 @@ function parseKiwoomRankingRows(json) {
         Math.abs(
           parseInt(String(row.now_trde_qty ?? row.trde_qty ?? "0").replace(/[^\d-]/g, ""), 10)
         ) || 0;
-      return { code, name, price, rate, volume };
+      const cntrStr = parseFloat(row.cntr_str ?? "0") || 0; // 체결강도 (100 초과: 매수세 우위)
+      const buyReq =
+        Math.abs(parseInt(String(row.buy_req ?? "0").replace(/[^\d-]/g, ""), 10)) || 0; // 매수잔량
+      const selReq =
+        Math.abs(parseInt(String(row.sel_req ?? "0").replace(/[^\d-]/g, ""), 10)) || 0; // 매도잔량
+      return { code, name, price, rate, volume, cntrStr, buyReq, selReq };
     })
     .filter((r) => r.code);
 }
@@ -121,11 +126,14 @@ async function collectAndStore(env) {
   if (all.length === 0) return { saved: 0 };
 
   const stmt = env.DB.prepare(
-    `INSERT INTO snapshots (code, name, price, change_rate, volume, market, captured_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO snapshots (code, name, price, change_rate, volume, market, captured_at, cntr_str, buy_req, sel_req)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const batch = all.map((s) =>
-    stmt.bind(s.code, s.name, s.price, s.rate, s.volume, s.market, capturedAt)
+    stmt.bind(
+      s.code, s.name, s.price, s.rate, s.volume, s.market, capturedAt,
+      s.cntrStr, s.buyReq, s.selReq
+    )
   );
   await env.DB.batch(batch);
 
@@ -208,7 +216,7 @@ async function getLatest(env) {
   const snapByTime = {};
   for (const t of times) {
     const r = await env.DB.prepare(
-      `SELECT code, name, price, change_rate, volume FROM snapshots WHERE captured_at = ?`
+      `SELECT code, name, price, change_rate, volume, cntr_str, buy_req, sel_req FROM snapshots WHERE captured_at = ?`
     )
       .bind(t)
       .all();
@@ -239,6 +247,7 @@ function renderDashboard() {
   th, td { padding:6px 4px; text-align:right; border-bottom:1px solid #2a2a2a; }
   th:first-child, td:first-child { text-align:left; }
   .up { color:#ff6b6b; }
+  .down { color:#4d9fff; }
   .delta { color:#ffd43b; }
   .empty { color:#666; padding:12px 0; }
   tr.clickable { cursor:pointer; }
@@ -342,7 +351,7 @@ function renderDashboard() {
       </div>
     </div>
     <table id="all">
-      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래량</th></tr></thead>
+      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래량</th><th>체결강도</th></tr></thead>
       <tbody><tr><td class="empty">데이터 없음</td></tr></tbody>
     </table>
   </div>
@@ -512,6 +521,7 @@ function renderAllTable() {
         <td>\${fmt(r.price)}</td>
         <td class="up">+\${r.change_rate.toFixed(2)}%</td>
         <td>\${fmt(r.volume)}</td>
+        <td class="\${r.cntr_str >= 100 ? 'up' : 'down'}">\${(r.cntr_str || 0).toFixed(1)}</td>
       </tr>\`).join('')
     : '<tr><td class="empty">데이터 없음</td></tr>';
 
