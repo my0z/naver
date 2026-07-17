@@ -363,6 +363,18 @@ function renderDashboard() {
 
   <div class="board">
     <div class="boardHeadRow">
+      <h2>🚨 VI 발동 종목</h2>
+      <button id="viScanBtn" class="sortBtn">새로고침</button>
+    </div>
+    <div class="sub" style="margin:0 0 8px;">변동성완화장치(VI) 발동 = 너무 급하게 움직여서 거래소가 2분간 강제로 멈춘 종목 (과열 신호)</div>
+    <table id="viStocks">
+      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th></tr></thead>
+      <tbody><tr><td class="empty">새로고침 버튼을 눌러주세요</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="board">
+    <div class="boardHeadRow">
       <h2>🔍 지난 1주일 패턴 유사 종목</h2>
       <button id="patternScanBtn" class="sortBtn">스캔 시작</button>
     </div>
@@ -927,6 +939,46 @@ document.getElementById('reloadBtn').addEventListener('click', (e) => {
   load().finally(() => setTimeout(() => e.target.classList.remove('spinning'), 600));
 });
 
+document.getElementById('viScanBtn').addEventListener('click', (e) => {
+  const btn = e.target;
+  const tbody = document.querySelector('#viStocks tbody');
+  btn.disabled = true;
+  btn.textContent = '조회 중...';
+
+  fetch('/api/vi-stocks')
+    .then(res => res.json())
+    .then(data => {
+      if (!data.ok) {
+        tbody.innerHTML = '<tr><td class="empty">조회 실패: ' + (data.error || '알 수 없는 오류') + '</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.stocks.length
+        ? data.stocks.map(r => '<tr class="clickable" data-code="' + r.code + '" data-name="' + r.name + '" data-price="' + r.price + '" data-rate="' + r.rate + '">' +
+            '<td>' + r.name + '</td>' +
+            '<td>' + fmt(r.price) + '</td>' +
+            '<td class="up">' + (r.rate >= 0 ? '+' : '') + r.rate.toFixed(2) + '%</td>' +
+          '</tr>').join('')
+        : '<tr><td class="empty">현재 VI 발동 종목 없음</td></tr>';
+
+      tbody.querySelectorAll('tr.clickable').forEach(tr => {
+        tr.addEventListener('click', () => {
+          openStockModal({
+            code: tr.dataset.code, name: tr.dataset.name,
+            price: Number(tr.dataset.price), rate: Number(tr.dataset.rate),
+            buyReq: 0, selReq: 0,
+          });
+        });
+      });
+    })
+    .catch(err => {
+      tbody.innerHTML = '<tr><td class="empty">조회 요청 오류: ' + err.message + '</td></tr>';
+    })
+    .finally(() => {
+      btn.disabled = false;
+      btn.textContent = '새로고침';
+    });
+});
+
 document.getElementById('patternScanBtn').addEventListener('click', (e) => {
   const btn = e.target;
   const tbody = document.querySelector('#patternScan tbody');
@@ -1143,6 +1195,53 @@ async function kiwoomSellOrder(env, code) {
 }
 
 // ---------- 키움 REST API: 현재가(시세표성정보) ----------
+// ---------- 키움 REST API: VI(변동성완화장치) 발동종목 ----------
+async function kiwoomViStocks(env, token) {
+  const res = await fetch(`${kiwoomHost(env)}/api/dostk/stkinfo`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json;charset=UTF-8",
+      authorization: `Bearer ${token}`,
+      "cont-yn": "N",
+      "next-key": "",
+      "api-id": "ka10054", // 변동성완화장치발동종목요청
+    },
+    body: JSON.stringify({
+      mrkt_tp: "000", // 시장구분: 000 전체
+      bf_mkrt_tp: "0", // 장전구분 추정치: 0 전체
+      trde_qty_tp: "0", // 거래량구분 추정치: 0 전체
+      min_trde_qty: "0",
+      max_trde_qty: "0",
+      trde_prica_tp: "0",
+      min_trde_prica: "0",
+      max_trde_prica: "0",
+      motn_stk_tp: "0", // VI 구분: 0 전체(정적+동적)
+      skip_stk: "000000000",
+      stex_tp: "3", // 거래소구분: 통합
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.return_code !== 0) {
+    throw new Error(`ka10054 실패: ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
+function parseViStocks(json) {
+  let rows = [];
+  for (const key of Object.keys(json)) {
+    if (Array.isArray(json[key])) { rows = json[key]; break; }
+  }
+  return rows.map((row) => ({
+    code: (row.stk_cd || "").split("_")[0],
+    name: row.stk_nm || "",
+    price: abs(row.cur_prc),
+    rate: parseFloat(row.flu_rt ?? "0") || 0,
+    viType: row.motn_tp || row.vi_gubun || "",
+    viTime: row.motn_tm || row.vi_tm || "",
+  })).filter((r) => r.code);
+}
+
 async function kiwoomQuote(env, token, code) {
   const res = await fetch(`${kiwoomHost(env)}/api/dostk/mrkcond`, {
     method: "POST",
@@ -1438,6 +1537,27 @@ self.addEventListener('fetch', (e) => {
           if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
           const result = await kiwoomSellOrder(env, code);
           return Response.json(result);
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/vi-stocks") {
+        try {
+          const token = await kiwoomIssueToken(env);
+          const raw = await kiwoomViStocks(env, token);
+          const stocks = parseViStocks(raw);
+          return Response.json({ ok: true, stocks });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/debug-vi") {
+        try {
+          const token = await kiwoomIssueToken(env);
+          const raw = await kiwoomViStocks(env, token);
+          return Response.json({ ok: true, rawKeys: Object.keys(raw), rawSample: JSON.stringify(raw).slice(0, 1500) });
         } catch (e) {
           return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
         }
