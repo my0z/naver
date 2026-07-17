@@ -455,7 +455,7 @@ function openStockModal(item) {
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '5'));
   modalPriceBtn.onclick = () => showQuote(item.code);
   modalOverlay.classList.add('open');
-  chartScale = 1; chartTX = 0; chartTY = 0;
+  chartFullPrices = []; chartWindowSize = 0; chartOffsetFromEnd = 0;
   showChart(item.code, '5');
   startChartAutoRefresh();
 }
@@ -466,7 +466,7 @@ periodRow.addEventListener('click', (e) => {
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   currentModalPeriod = btn.dataset.period;
-  chartScale = 1; chartTX = 0; chartTY = 0;
+  chartFullPrices = []; chartWindowSize = 0; chartOffsetFromEnd = 0;
   showChart(currentModalCode, currentModalPeriod);
   startChartAutoRefresh(); // 기간 바뀌면 갱신 타이머 리셋
 });
@@ -533,30 +533,39 @@ function showQuote(code) {
 
 const PERIOD_LABEL = { 'T':'틱차트', '1':'1분봉', '5':'5분봉', '15':'15분봉', '30':'30분봉', 'D':'일봉', 'W':'주봉', 'M':'월봉' };
 
-// ---------- 차트 확대/축소/드래그 ----------
-let chartScale = 1, chartTX = 0, chartTY = 0;
-let chartDragging = false, chartLastX = 0, chartLastY = 0;
-let chartPinchStartDist = 0, chartPinchStartScale = 1;
-const CHART_MIN_SCALE = 1, CHART_MAX_SCALE = 6;
-
-function chartTransformCSS() {
-  return 'transform: translate(' + chartTX + 'px,' + chartTY + 'px) scale(' + chartScale + '); transform-origin: center center; touch-action: none;';
-}
+// ---------- 차트 확대/축소/드래그 (구간을 실제로 좁혀서 그 구간의 최고/최저로 y축을 다시 잡음) ----------
+let chartFullPrices = [];       // 서버에서 받은 전체 가격 배열 (과거→최신 순)
+let chartWindowSize = 0;        // 현재 화면에 보여줄 포인트 개수 (작을수록 확대된 상태)
+let chartOffsetFromEnd = 0;     // 최신 시점 기준으로 몇 칸 뒤로 가있는지 (0 = 최신 시점이 오른쪽 끝)
+let chartDragging = false, chartDragStartX = 0, chartDragStartOffset = 0;
+let chartPinchStartDist = 0, chartPinchStartWindow = 0;
+const CHART_MIN_WINDOW = 6; // 이보다 더 좁게는 확대 안 함 (최소 6개 포인트는 보여줌)
 
 function resetChartZoom() {
-  chartScale = 1; chartTX = 0; chartTY = 0;
-  applyChartTransform();
+  chartWindowSize = chartFullPrices.length;
+  chartOffsetFromEnd = 0;
+  renderCurrentWindow();
 }
 
-function applyChartTransform() {
-  const svg = modalDetail.querySelector('#chartWrap svg');
-  if (svg) svg.style.cssText = chartTransformCSS();
+function clampChartWindow() {
+  const total = chartFullPrices.length;
+  chartWindowSize = Math.max(CHART_MIN_WINDOW, Math.min(total, Math.round(chartWindowSize)));
+  const maxOffset = Math.max(0, total - chartWindowSize);
+  chartOffsetFromEnd = Math.max(0, Math.min(maxOffset, Math.round(chartOffsetFromEnd)));
 }
 
-function clampChartPan() {
-  const maxOffset = (chartScale - 1) * 170; // 대략적인 경계 (차트 폭 340의 절반)
-  chartTX = Math.max(-maxOffset, Math.min(maxOffset, chartTX));
-  chartTY = Math.max(-maxOffset * 0.4, Math.min(maxOffset * 0.4, chartTY));
+function getVisibleSlice() {
+  const total = chartFullPrices.length;
+  const end = total - chartOffsetFromEnd; // 잘라낼 구간의 끝(미포함)
+  const start = Math.max(0, end - chartWindowSize);
+  return chartFullPrices.slice(start, end);
+}
+
+function renderCurrentWindow() {
+  if (!chartFullPrices.length) return;
+  clampChartWindow();
+  const slice = getVisibleSlice();
+  modalDetail.innerHTML = renderSparkline(slice, currentModalPeriod, chartWindowSize < chartFullPrices.length);
 }
 
 function touchDist(touches) {
@@ -568,45 +577,48 @@ function touchDist(touches) {
 modalDetail.addEventListener('pointerdown', (e) => {
   if (!e.target.closest('#chartWrap')) return;
   chartDragging = true;
-  chartLastX = e.clientX;
-  chartLastY = e.clientY;
+  chartDragStartX = e.clientX;
+  chartDragStartOffset = chartOffsetFromEnd;
 });
 modalDetail.addEventListener('pointermove', (e) => {
-  if (!chartDragging) return;
-  chartTX += e.clientX - chartLastX;
-  chartTY += e.clientY - chartLastY;
-  chartLastX = e.clientX;
-  chartLastY = e.clientY;
-  clampChartPan();
-  applyChartTransform();
+  if (!chartDragging || !chartFullPrices.length) return;
+  const wrap = modalDetail.querySelector('#chartWrap');
+  const widthPx = wrap ? wrap.clientWidth : 340;
+  const deltaPx = e.clientX - chartDragStartX;
+  const indicesPerPx = chartWindowSize / widthPx;
+  // 오른쪽으로 드래그(과거를 보고 싶음) -> offset 증가
+  chartOffsetFromEnd = chartDragStartOffset + Math.round(deltaPx * indicesPerPx);
+  renderCurrentWindow();
 });
 ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => {
   modalDetail.addEventListener(ev, () => { chartDragging = false; });
 });
 
 modalDetail.addEventListener('wheel', (e) => {
-  if (!e.target.closest('#chartWrap')) return;
+  if (!e.target.closest('#chartWrap') || !chartFullPrices.length) return;
   e.preventDefault();
-  chartScale = Math.max(CHART_MIN_SCALE, Math.min(CHART_MAX_SCALE, chartScale - e.deltaY * 0.002));
-  clampChartPan();
-  applyChartTransform();
+  const zoomFactor = e.deltaY < 0 ? 0.85 : 1 / 0.85; // 위로 스크롤 = 확대(구간 축소)
+  chartWindowSize = chartWindowSize * zoomFactor;
+  renderCurrentWindow();
 }, { passive: false });
 
 modalDetail.addEventListener('touchstart', (e) => {
   if (!e.target.closest('#chartWrap')) return;
   if (e.touches.length === 2) {
     chartPinchStartDist = touchDist(e.touches);
-    chartPinchStartScale = chartScale;
+    chartPinchStartWindow = chartWindowSize;
   }
 }, { passive: true });
 modalDetail.addEventListener('touchmove', (e) => {
-  if (!e.target.closest('#chartWrap')) return;
+  if (!e.target.closest('#chartWrap') || !chartFullPrices.length) return;
   if (e.touches.length === 2) {
     e.preventDefault();
     const dist = touchDist(e.touches);
-    chartScale = Math.max(CHART_MIN_SCALE, Math.min(CHART_MAX_SCALE, chartPinchStartScale * (dist / chartPinchStartDist)));
-    clampChartPan();
-    applyChartTransform();
+    if (chartPinchStartDist > 0) {
+      // 손가락을 벌릴수록(dist 커짐) 구간을 좁혀서(확대) 세밀하게 보여줌
+      chartWindowSize = chartPinchStartWindow / (dist / chartPinchStartDist);
+      renderCurrentWindow();
+    }
   }
 }, { passive: false });
 
@@ -630,7 +642,14 @@ function showChart(code, period, silent) {
         }
         return;
       }
-      modalDetail.innerHTML = renderSparkline(data.prices, period);
+      const wasFullView = chartWindowSize === 0 || chartWindowSize >= chartFullPrices.length;
+      chartFullPrices = data.prices;
+      if (!silent || wasFullView) {
+        // 새로 열었거나 이전에 확대 안 한 상태였으면 항상 전체 보기 유지
+        chartWindowSize = chartFullPrices.length;
+        chartOffsetFromEnd = 0;
+      }
+      renderCurrentWindow();
     })
     .catch(err => {
       if (!silent) {
@@ -639,11 +658,11 @@ function showChart(code, period, silent) {
     });
 }
 
-function renderSparkline(prices, period) {
+function renderSparkline(prices, period, isZoomed) {
   const w = 340, h = 120, pad = 6;
   const min = Math.min(...prices), max = Math.max(...prices);
   const range = (max - min) || 1;
-  const stepX = (w - pad * 2) / (prices.length - 1);
+  const stepX = prices.length > 1 ? (w - pad * 2) / (prices.length - 1) : 0;
   const points = prices.map((p, i) => {
     const x = pad + i * stepX;
     const y = h - pad - ((p - min) / range) * (h - pad * 2);
@@ -653,12 +672,14 @@ function renderSparkline(prices, period) {
   const color = up ? '#ff6b6b' : '#4d9fff';
   const now = new Date().toLocaleTimeString('ko-KR');
   return '<div class="chartWrap" id="chartWrap">' +
-    '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h + '" style="' + chartTransformCSS() + '">' +
-    '<polyline points="' + points + '" fill="none" stroke="' + color + '" stroke-width="2" vector-effect="non-scaling-stroke" />' +
+    '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h + '">' +
+    '<polyline points="' + points + '" fill="none" stroke="' + color + '" stroke-width="1.5" vector-effect="non-scaling-stroke" />' +
     '</svg>' +
     '</div>' +
-    '<div class="chartRange">' + fmt(min) + '원 ~ ' + fmt(max) + '원 (' + (PERIOD_LABEL[period] || period) + ')' +
-    ' <span class="liveDot">●</span> 실시간 · ' + now + ' · <span class="chartResetBtn" id="chartResetBtn">확대 초기화</span></div>';
+    '<div class="chartRange">' + fmt(min) + '원 ~ ' + fmt(max) + '원 (' + (PERIOD_LABEL[period] || period) +
+    (isZoomed ? ' · ' + prices.length + '개 구간 확대중' : '') + ')' +
+    ' <span class="liveDot">●</span> 실시간 · ' + now +
+    (isZoomed ? ' · <span class="chartResetBtn" id="chartResetBtn">전체보기</span>' : '') + '</div>';
 }
 
 let latestList = [];
