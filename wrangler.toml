@@ -19,7 +19,7 @@ class_name = "PriceStreamDO"
 
 [[migrations]]
 tag = "v1-realtime-ws"
-new_classes = ["PriceStreamDO"]
+new_sqlite_classes = ["PriceStreamDO"]
 
 [vars]
 # 민감하지 않은 값만 여기 둠. "true" = 모의투자, "false" = 실전투자
