@@ -331,6 +331,10 @@ function renderDashboard() {
   .streakBoard h2 { color:#ffd43b; }
   .streakBoard.streak5 h2 { color:#69db7c; }
   .intervalTag { font-size:11px; color:#888; font-weight:normal; }
+  #goldenWindowBanner {
+    background:linear-gradient(90deg,#ff6b6b,#ffa94d); color:#111; font-weight:600;
+    font-size:12px; padding:8px 12px; border-radius:10px; margin-bottom:14px;
+  }
   .streakBadge { color:#ffd43b; font-size:11px; margin-left:6px; }
   #reloadBtn {
     position:fixed; right:14px; top:calc(50% - 30px); transform:translateY(-50%);
@@ -361,6 +365,7 @@ function renderDashboard() {
   <button id="installBtn" title="홈 화면에 추가" style="display:none;">📲 앱 설치</button>
   <h1>🔥 급등주 스크리너</h1>
   <div class="sub" id="ts">불러오는 중...</div>
+  <div id="goldenWindowBanner" style="display:none;"></div>
 
   <div class="board">
     <div class="boardHeadRow">
@@ -404,17 +409,18 @@ function renderDashboard() {
   <div class="board">
     <div class="boardHeadRow">
       <h2>전체 목록 (등락률 5~15%)</h2>
-      <div class="sub" style="margin:0 0 8px;">⚠️ '종합점수'는 여러 지표를 임의로 조합한 참고용 순위이며 수익을 보장하지 않습니다</div>
+      <div class="sub" style="margin:0 0 8px;">⚠️ '종합점수'/'신호'는 여러 지표를 임의로 조합한 참고용 필터이며, 검증된 전략이 아니고 수익을 보장하지 않습니다. 🔥 개수는 체결강도105+/매수잔량우위/거래량상위30%/거래대금상위30%/연속상승 5개 중 몇 개 충족했는지입니다.</div>
       <div class="sortToggle">
         <button class="sortBtn active" id="sortByMomentum">종합점수순</button>
         <button class="sortBtn" id="sortByRate">등락률순</button>
         <button class="sortBtn" id="sortByVolumeDesc">거래량 많은순</button>
         <button class="sortBtn" id="sortByVolumeAsc">거래량 적은순</button>
         <button class="sortBtn" id="sortByCntrStr">체결강도순</button>
+        <button class="sortBtn" id="sortBySignal">신호점수순</button>
       </div>
     </div>
     <table id="all">
-      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래량</th><th>체결강도</th></tr></thead>
+      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래량</th><th>체결강도</th><th>신호</th></tr></thead>
       <tbody><tr><td class="empty">데이터 없음</td></tr></tbody>
     </table>
   </div>
@@ -828,6 +834,30 @@ function computeMomentumScores(latest, streak3Codes, streak5Codes) {
   });
 }
 
+// 신호 점수: 4개 조건 체크(검증된 전략 아님, 참고용 필터일 뿐)
+// 1) 체결강도 105 이상  2) 매수잔량>매도잔량  3) 거래량 상위 30% 이내  4) 3연속 이상 상승중
+function computeSignalScores(latest, streak3Codes, streak5Codes) {
+  if (!latest.length) return;
+  const volSorted = [...latest].map(r => r.volume || 0).sort((a, b) => b - a);
+  const top30Cutoff = volSorted[Math.max(0, Math.floor(volSorted.length * 0.3) - 1)] || 0;
+  const tradeValSorted = [...latest].map(r => (r.price || 0) * (r.volume || 0)).sort((a, b) => b - a);
+  const tradeVal30Cutoff = tradeValSorted[Math.max(0, Math.floor(tradeValSorted.length * 0.3) - 1)] || 0;
+
+  latest.forEach(r => {
+    let n = 0;
+    const checks = [];
+    const tradeValue = (r.price || 0) * (r.volume || 0);
+    if ((r.cntr_str || 0) >= 105) { n++; checks.push('체결강도 105+'); }
+    if ((r.buy_req || 0) > (r.sel_req || 0)) { n++; checks.push('매수잔량 우위'); }
+    if ((r.volume || 0) >= top30Cutoff) { n++; checks.push('거래량 상위30%'); }
+    if (streak3Codes.has(r.code) || streak5Codes.has(r.code)) { n++; checks.push('연속상승 중'); }
+    if (tradeValue >= tradeVal30Cutoff) { n++; checks.push('거래대금 상위30%'); }
+    r.signalScore = n;
+    r.signalChecks = checks;
+    r.tradeValue = tradeValue;
+  });
+}
+
 // 테이블을 통째로 갈아엎지 않고, 바뀐 셀만 업데이트 + 신규/삭제 행만 추가/제거
 // (기존 DOM 노드를 최대한 재사용해서 화면 깜빡임 없이 데이터만 바뀌게)
 function patchTable(tbody, items, renderCells, emptyMessage, onRowClick) {
@@ -880,6 +910,7 @@ function renderAllTable() {
     : currentSort === 'volumeAsc' ? a.volume - b.volume
     : currentSort === 'cntrStr' ? (b.cntr_str || 0) - (a.cntr_str || 0)
     : currentSort === 'momentum' ? (b.momentumScore || 0) - (a.momentumScore || 0)
+    : currentSort === 'signal' ? (b.signalScore || 0) - (a.signalScore || 0)
     : b.change_rate - a.change_rate
   );
   const allBody = document.querySelector('#all tbody');
@@ -889,6 +920,7 @@ function renderAllTable() {
     '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
     fmt(r.volume),
     '<span class="' + (r.cntr_str >= 100 ? 'up' : 'down') + '">' + (r.cntr_str || 0).toFixed(1) + '</span>',
+    '<span title="' + ((r.signalChecks || []).join(', ') || '조건 없음') + '">' + '🔥'.repeat(r.signalScore || 0) + '</span>',
   ], '데이터 없음');
 }
 
@@ -918,6 +950,12 @@ document.getElementById('sortByVolumeAsc').addEventListener('click', (e) => {
 });
 document.getElementById('sortByCntrStr').addEventListener('click', (e) => {
   currentSort = 'cntrStr';
+  document.querySelectorAll('.sortBtn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  renderAllTable();
+});
+document.getElementById('sortBySignal').addEventListener('click', (e) => {
+  currentSort = 'signal';
   document.querySelectorAll('.sortBtn').forEach(b => b.classList.remove('active'));
   e.target.classList.add('active');
   renderAllTable();
@@ -959,6 +997,7 @@ async function load() {
   const streak3Codes = new Set(data.streak3.map(r => r.code));
   const streak5Codes = new Set(data.streak5.map(r => r.code));
   computeMomentumScores(latestList, streak3Codes, streak5Codes);
+  computeSignalScores(latestList, streak3Codes, streak5Codes);
 
   // 클릭용 종목 정보 매핑 (streak5 + streak3 + top5 + all 합쳐서)
   byCodeMap = {};
@@ -1079,6 +1118,21 @@ document.getElementById('collectBtn').addEventListener('click', (e) => {
       btn.disabled = false;
     });
 });
+
+// 나무위키 단타매매 기법: "장 개장~9시30분이 가장 활발한 시간대"
+function updateGoldenWindowBanner() {
+  const kst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  const minutes = kst.getHours() * 60 + kst.getMinutes();
+  const banner = document.getElementById('goldenWindowBanner');
+  if (minutes >= 9 * 60 && minutes <= 9 * 60 + 30) {
+    banner.style.display = 'block';
+    banner.textContent = '⏰ 지금은 단타 활발 시간대(09:00~09:30)입니다 — 거래대금이 가장 활발하게 들어오는 구간';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+updateGoldenWindowBanner();
+setInterval(updateGoldenWindowBanner, 30000);
 
 load();
 let mainRefreshTimer = setInterval(() => {
