@@ -589,22 +589,39 @@ function connectPriceSocket(code) {
     priceSocket = new WebSocket(proto + '//' + location.host + '/ws');
     priceSocket.addEventListener('open', () => {
       priceSocketReady = true;
+      console.log('[realtime] ws open, subscribing', code);
       priceSocket.send(JSON.stringify({ type: 'subscribe', code }));
     });
     priceSocket.addEventListener('message', (e) => {
       try {
         const msg = JSON.parse(e.data);
+        console.log('[realtime] message', msg);
+        if (msg.type === 'error') {
+          const badge = document.getElementById('modalCodeBadge');
+          if (badge) badge.textContent = '⚠️ 실시간 연결 실패: ' + msg.error;
+          return;
+        }
         if (msg.type === 'price' && msg.code === currentModalCode && msg.price) {
           modalPrice.textContent = fmt(msg.price) + '원';
           if (msg.rate) modalRate.textContent = (msg.rate >= 0 ? '+' : '') + msg.rate.toFixed(2) + '%';
           const liveDot = modalDetail.querySelector('.liveDot');
           if (liveDot) liveDot.style.color = '#ffd43b'; // 실시간 수신 중 표시
         }
-      } catch (_) {}
+      } catch (err) {
+        console.log('[realtime] parse error', err, e.data);
+      }
     });
-    priceSocket.addEventListener('close', () => { priceSocketReady = false; priceSocket = null; });
-    priceSocket.addEventListener('error', () => { priceSocketReady = false; });
-  } catch (_) {
+    priceSocket.addEventListener('close', (e) => {
+      console.log('[realtime] ws closed', e.code, e.reason);
+      priceSocketReady = false;
+      priceSocket = null;
+    });
+    priceSocket.addEventListener('error', (e) => {
+      console.log('[realtime] ws error', e);
+      priceSocketReady = false;
+    });
+  } catch (err) {
+    console.log('[realtime] connect exception', err);
     priceSocket = null;
   }
 }
