@@ -294,14 +294,14 @@ function renderDashboard() {
     flex:1; text-align:center; padding:8px 6px; border-radius:8px;
     background:#2a2a2a; color:#aaa; font-size:12px; text-decoration:none;
   }
-  #modalNewsSummary { margin-bottom:12px; }
+  #modalNewsSummary { margin-bottom:12px; max-height:78px; overflow-y:auto; }
   .newsItem {
     display:block; background:#151515; border-radius:8px; padding:8px 10px;
     margin-bottom:6px; text-decoration:none;
   }
   .newsItemTitle { font-size:12px; color:#eee; font-weight:600; margin-bottom:2px; }
   .newsItemDesc { font-size:11px; color:#888; line-height:1.4; }
-  #modalDartSummary { margin-bottom:12px; }
+  #modalDartSummary { margin-bottom:12px; max-height:78px; overflow-y:auto; }
   .dartItem { border-left:2px solid #ffd43b; }
   .highGap { font-size:11px; color:#888; margin-top:2px; }
   .sellWarning { font-size:12px; color:#ff8787; background:#2a1616; border-radius:8px; padding:8px 10px; margin-top:8px; }
@@ -1654,7 +1654,7 @@ async function naverNewsSearch(env, query) {
   if (!env.NAVER_CLIENT_ID || !env.NAVER_CLIENT_SECRET) {
     throw new Error("NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 시크릿이 설정되지 않았습니다.");
   }
-  const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(query)}&display=3&sort=date`;
+  const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(query)}&display=5&sort=date`;
   const res = await fetch(url, {
     headers: {
       "X-Naver-Client-Id": env.NAVER_CLIENT_ID,
