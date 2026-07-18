@@ -680,6 +680,7 @@ let priceSocketCode = null;
 function connectPriceStream(code) {
 disconnectPriceStream();
 priceSocketCode = code;
+updateLiveStatusBadge(code, 'connecting', '🔄 연결 중...');
 try {
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
 priceSocket = new WebSocket(proto + '://' + location.host + '/ws/price?code=' + code);
@@ -688,15 +689,24 @@ let msg;
 try { msg = JSON.parse(evt.data); } catch (e) { return; }
 if (msg.type === 'tick') {
 console.log('[실시간 체결]', code, msg);
-renderLiveTickBadge(msg);
+const t = new Date(msg.ts).toLocaleTimeString('ko-KR');
+updateLiveStatusBadge(code, 'tick', '⚡ 실시간 체결 수신 ' + t);
+} else if (msg.type === 'status') {
+if (msg.status === 'connected') {
+updateLiveStatusBadge(code, 'connected', '✅ 실시간 연결됨 (체결 대기 중)');
+} else {
+updateLiveStatusBadge(code, 'error', '⚠️ 연결 안됨 (재연결 중...)');
+}
 } else if (msg.type === 'error') {
 console.warn('[실시간 시세 오류]', msg.message);
+updateLiveStatusBadge(code, 'error', '⚠️ ' + msg.message);
 }
 };
-priceSocket.onerror = () => { disconnectPriceStream(); };
+priceSocket.onerror = () => { updateLiveStatusBadge(code, 'error', '⚠️ 연결 오류'); };
 priceSocket.onclose = () => { priceSocket = null; };
 } catch (e) {
 priceSocket = null;
+updateLiveStatusBadge(code, 'error', '⚠️ 연결 실패');
 }
 }
 
@@ -710,17 +720,20 @@ const badge = document.getElementById('liveTickBadge');
 if (badge) badge.remove();
 }
 
-function renderLiveTickBadge(msg) {
-if (currentModalCode !== msg.code) return;
+function updateLiveStatusBadge(code, state, text) {
+if (currentModalCode !== code) return;
 let badge = document.getElementById('liveTickBadge');
 if (!badge) {
 badge = document.createElement('div');
 badge.id = 'liveTickBadge';
-badge.style.cssText = 'font-size:11px;color:#69db7c;margin-top:4px;';
+badge.style.cssText = 'font-size:11px;margin-top:4px;display:flex;align-items:center;gap:6px;';
 modalDetail.parentElement.insertBefore(badge, modalDetail);
 }
-const t = new Date(msg.ts).toLocaleTimeString('ko-KR');
-badge.textContent = '⚡ 실시간 체결 수신 ' + t + ' (콘솔에서 raw 데이터 확인 가능)';
+const color = state === 'error' ? '#ff8787' : (state === 'connecting' ? '#888' : '#69db7c');
+badge.innerHTML = '<span style="color:' + color + '">' + text + '</span>' +
+'<button id="liveReconnectBtn" style="background:#2a2a2a;color:#4d9fff;border:none;border-radius:6px;padding:2px 8px;font-size:11px;cursor:pointer;">🔄 재연결</button>';
+const btn = document.getElementById('liveReconnectBtn');
+if (btn) btn.onclick = () => connectPriceStream(code);
 }
 
 function showQuote(code, silent) {
