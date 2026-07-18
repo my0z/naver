@@ -1,0 +1,8 @@
+{
+  "name": "naversise",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "fflate": "^0.8.2"
+  }
+}
