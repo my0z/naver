@@ -23,3 +23,19 @@ KIWOOM_SELL_QTY = "1"
 # Cloudflare 대시보드 > Workers & Pages > 해당 Worker > Settings
 # > Variables and Secrets > Add > 타입을 "Secret"으로 선택해서 등록.
 # (git에 커밋되는 이 파일에 시크릿을 넣으면 그대로 노출됩니다)
+
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
+
