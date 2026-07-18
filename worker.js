@@ -460,8 +460,9 @@ const modalCancelBtn = document.getElementById('modalCancelBtn');
 let currentModalCode = null;
 let currentModalName = null;
 let currentModalPeriod = '5';
+let currentModalView = 'chart'; // 'chart' | 'quote' - 자동갱신이 어느 화면을 새로고침할지
 let chartRefreshTimer = null;
-const CHART_REFRESH_MS = 5000; // 5초마다 차트 자동 갱신
+const CHART_REFRESH_MS = 3000; // 3초마다 자동 갱신 (ka10079~83 / ka10007, TR당 초당1건 제한에 여유있게 준수)
 const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const KIWOOM_SCHEME_URL = 'heromts://heromtshost';
 const KIWOOM_PLAYSTORE = 'https://play.google.com/store/apps/details?id=com.kiwoom.heromts';
@@ -489,6 +490,7 @@ function openStockModal(item) {
   currentModalName = item.name;
   currentModalCode = item.code;
   currentModalPeriod = '5';
+  currentModalView = 'chart';
   modalName.textContent = item.name;
   modalCodeBadge.textContent = '코드: ' + item.code + ' (복사됨)';
   modalPrice.textContent = fmt(item.price) + '원';
@@ -496,7 +498,7 @@ function openStockModal(item) {
   renderOrderBook(item.buyReq, item.selReq);
   renderNewsLinks(item.name);
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '5'));
-  modalPriceBtn.onclick = () => showQuote(item.code);
+  modalPriceBtn.onclick = () => { currentModalView = 'quote'; showQuote(item.code); };
   modalOverlay.classList.add('open');
   chartFullPrices = []; chartWindowSize = 0; chartOffsetFromEnd = 0;
   showChart(item.code, '5');
@@ -509,6 +511,7 @@ periodRow.addEventListener('click', (e) => {
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   currentModalPeriod = btn.dataset.period;
+  currentModalView = 'chart';
   chartFullPrices = []; chartWindowSize = 0; chartOffsetFromEnd = 0;
   showChart(currentModalCode, currentModalPeriod);
   startChartAutoRefresh(); // 기간 바뀌면 갱신 타이머 리셋
@@ -522,7 +525,11 @@ function startChartAutoRefresh() {
       return;
     }
     if (document.hidden) return; // 탭이 백그라운드면 갱신 스킵 (불필요한 API 호출 방지)
-    showChart(currentModalCode, currentModalPeriod, true);
+    if (currentModalView === 'quote') {
+      showQuote(currentModalCode, true);
+    } else {
+      showChart(currentModalCode, currentModalPeriod, true);
+    }
   }, CHART_REFRESH_MS);
 }
 
@@ -534,9 +541,13 @@ function stopChartAutoRefresh() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  // 다시 화면으로 돌아왔을 때, 모달이 열려있으면 바로 한 번 최신화
+  // 다시 화면으로 돌아왔을 때, 모달이 열려있으면 현재 보고 있던 화면 기준으로 바로 한 번 최신화
   if (!document.hidden && currentModalCode && modalOverlay.classList.contains('open')) {
-    showChart(currentModalCode, currentModalPeriod, true);
+    if (currentModalView === 'quote') {
+      showQuote(currentModalCode, true);
+    } else {
+      showChart(currentModalCode, currentModalPeriod, true);
+    }
   }
 });
 
@@ -576,16 +587,17 @@ function renderNewsLinks(name) {
     '<a class="newsLink" href="https://search.naver.com/search.naver?query=' + dartQ + '" target="_blank" rel="noopener">📋 DART 공시</a>';
 }
 
-function showQuote(code) {
-  modalDetail.innerHTML = '<div class="detailLoading">불러오는 중...</div>';
+function showQuote(code, silent) {
+  if (!silent) modalDetail.innerHTML = '<div class="detailLoading">불러오는 중...</div>';
   fetch('/api/quote?code=' + code)
     .then(res => res.json())
     .then(data => {
       if (!data.ok) {
-        modalDetail.innerHTML = '<div class="detailError">조회 실패: ' + (data.error || '알 수 없는 오류') + '</div>';
+        if (!silent) modalDetail.innerHTML = '<div class="detailError">조회 실패: ' + (data.error || '알 수 없는 오류') + '</div>';
         return;
       }
       const gapFromHigh = data.high ? (((data.price - data.high) / data.high) * 100).toFixed(2) : '0.00';
+      const now = new Date().toLocaleTimeString('ko-KR');
       modalDetail.innerHTML =
         '<div class="detailGrid">' +
         '<div>현재가<b>' + fmt(data.price) + '원</b></div>' +
@@ -595,10 +607,11 @@ function showQuote(code) {
         '<div>저가<b>' + fmt(data.low) + '원</b></div>' +
         '<div>거래량<b>' + fmt(data.volume) + '</b></div>' +
         '</div>' +
-        '<div class="highGap">오늘 고점 대비 <b>' + gapFromHigh + '%</b></div>';
+        '<div class="highGap">오늘 고점 대비 <b>' + gapFromHigh + '%</b></div>' +
+        '<div class="chartRange"><span class="liveDot">●</span> 실시간 · ' + now + '</div>';
     })
     .catch(err => {
-      modalDetail.innerHTML = '<div class="detailError">조회 요청 오류: ' + err.message + '</div>';
+      if (!silent) modalDetail.innerHTML = '<div class="detailError">조회 요청 오류: ' + err.message + '</div>';
     });
 }
 
@@ -815,6 +828,52 @@ function computeMomentumScores(latest, streak3Codes, streak5Codes) {
   });
 }
 
+// 테이블을 통째로 갈아엎지 않고, 바뀐 셀만 업데이트 + 신규/삭제 행만 추가/제거
+// (기존 DOM 노드를 최대한 재사용해서 화면 깜빡임 없이 데이터만 바뀌게)
+function patchTable(tbody, items, renderCells, emptyMessage, onRowClick) {
+  onRowClick = onRowClick || (item => { const mapped = byCodeMap[item.code]; if (mapped) openStockModal(mapped); });
+  if (!items.length) {
+    if (tbody.children.length !== 1 || !tbody.querySelector('.empty')) {
+      tbody.innerHTML = '<tr><td class="empty">' + emptyMessage + '</td></tr>';
+    }
+    return;
+  }
+
+  const existing = {};
+  tbody.querySelectorAll('tr[data-code]').forEach(tr => { existing[tr.dataset.code] = tr; });
+  // 빈 상태 플레이스홀더가 남아있으면 제거
+  const placeholder = tbody.querySelector('td.empty');
+  if (placeholder) placeholder.closest('tr').remove();
+
+  let prevNode = null;
+  items.forEach(item => {
+    const cells = renderCells(item);
+    let tr = existing[item.code];
+    if (tr) {
+      const tds = tr.children;
+      cells.forEach((html, i) => {
+        if (tds[i] && tds[i].innerHTML !== html) tds[i].innerHTML = html;
+      });
+      delete existing[item.code];
+    } else {
+      tr = document.createElement('tr');
+      tr.className = 'clickable';
+      tr.dataset.code = item.code;
+      cells.forEach(html => {
+        const td = document.createElement('td');
+        td.innerHTML = html;
+        tr.appendChild(td);
+      });
+      tr.addEventListener('click', () => onRowClick(item));
+    }
+    const wantedNext = prevNode ? prevNode.nextSibling : tbody.firstChild;
+    if (wantedNext !== tr) tbody.insertBefore(tr, wantedNext);
+    prevNode = tr;
+  });
+
+  Object.values(existing).forEach(tr => tr.remove());
+}
+
 function renderAllTable() {
   const sorted = [...latestList].sort((a, b) =>
     currentSort === 'volumeDesc' ? b.volume - a.volume
@@ -824,22 +883,13 @@ function renderAllTable() {
     : b.change_rate - a.change_rate
   );
   const allBody = document.querySelector('#all tbody');
-  allBody.innerHTML = sorted.length
-    ? sorted.map(r => \`<tr class="clickable" data-code="\${r.code}">
-        <td>\${r.name}</td>
-        <td>\${fmt(r.price)}</td>
-        <td class="up">+\${r.change_rate.toFixed(2)}%</td>
-        <td>\${fmt(r.volume)}</td>
-        <td class="\${r.cntr_str >= 100 ? 'up' : 'down'}">\${(r.cntr_str || 0).toFixed(1)}</td>
-      </tr>\`).join('')
-    : '<tr><td class="empty">데이터 없음</td></tr>';
-
-  allBody.querySelectorAll('tr.clickable').forEach(tr => {
-    tr.addEventListener('click', () => {
-      const item = byCodeMap[tr.dataset.code];
-      if (item) openStockModal(item);
-    });
-  });
+  patchTable(allBody, sorted, r => [
+    r.name,
+    fmt(r.price),
+    '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
+    fmt(r.volume),
+    '<span class="' + (r.cntr_str >= 100 ? 'up' : 'down') + '">' + (r.cntr_str || 0).toFixed(1) + '</span>',
+  ], '데이터 없음');
 }
 
 document.getElementById('sortByMomentum').addEventListener('click', (e) => {
@@ -882,34 +932,28 @@ async function load() {
     : '아직 저장된 데이터가 없습니다';
 
   const streak5Body = document.querySelector('#streak5 tbody');
-  streak5Body.innerHTML = data.streak5.length
-    ? data.streak5.map(r => \`<tr class="clickable" data-code="\${r.code}">
-        <td>\${r.name}</td>
-        <td>\${fmt(r.price)}</td>
-        <td class="up">+\${r.change_rate.toFixed(2)}%</td>
-        <td class="delta">5연속<span class="streakBadge">▲\${r.totalGain.toFixed(2)}%p</span></td>
-      </tr>\`).join('')
-    : '<tr><td class="empty">5연속 상승 종목 없음</td></tr>';
+  patchTable(streak5Body, data.streak5, r => [
+    r.name,
+    fmt(r.price),
+    '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
+    '<span class="delta">5연속<span class="streakBadge">▲' + r.totalGain.toFixed(2) + '%p</span></span>',
+  ], '5연속 상승 종목 없음');
 
   const streak3Body = document.querySelector('#streak3 tbody');
-  streak3Body.innerHTML = data.streak3.length
-    ? data.streak3.map(r => \`<tr class="clickable" data-code="\${r.code}">
-        <td>\${r.name}</td>
-        <td>\${fmt(r.price)}</td>
-        <td class="up">+\${r.change_rate.toFixed(2)}%</td>
-        <td class="delta">3연속<span class="streakBadge">▲\${r.totalGain.toFixed(2)}%p</span></td>
-      </tr>\`).join('')
-    : '<tr><td class="empty">3연속 상승 종목 없음</td></tr>';
+  patchTable(streak3Body, data.streak3, r => [
+    r.name,
+    fmt(r.price),
+    '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
+    '<span class="delta">3연속<span class="streakBadge">▲' + r.totalGain.toFixed(2) + '%p</span></span>',
+  ], '3연속 상승 종목 없음');
 
   const top5Body = document.querySelector('#top5 tbody');
-  top5Body.innerHTML = data.risingTop5.length
-    ? data.risingTop5.map(r => \`<tr class="clickable" data-code="\${r.code}">
-        <td>\${r.name}</td>
-        <td>\${fmt(r.price)}</td>
-        <td class="up">+\${r.change_rate.toFixed(2)}%</td>
-        <td class="delta">▲\${r.delta.toFixed(2)}%p</td>
-      </tr>\`).join('')
-    : '<tr><td class="empty">직전 스냅샷 대비 상승 종목 없음</td></tr>';
+  patchTable(top5Body, data.risingTop5, r => [
+    r.name,
+    fmt(r.price),
+    '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
+    '<span class="delta">▲' + r.delta.toFixed(2) + '%p</span>',
+  ], '직전 스냅샷 대비 상승 종목 없음');
 
   latestList = data.latest;
   const streak3Codes = new Set(data.streak3.map(r => r.code));
@@ -926,13 +970,6 @@ async function load() {
   });
 
   renderAllTable();
-
-  document.querySelectorAll('#streak5 tr.clickable, #streak3 tr.clickable, #top5 tr.clickable').forEach(tr => {
-    tr.addEventListener('click', () => {
-      const item = byCodeMap[tr.dataset.code];
-      if (item) openStockModal(item);
-    });
-  });
 }
 
 document.getElementById('reloadBtn').addEventListener('click', (e) => {
@@ -940,45 +977,42 @@ document.getElementById('reloadBtn').addEventListener('click', (e) => {
   load().finally(() => setTimeout(() => e.target.classList.remove('spinning'), 600));
 });
 
-document.getElementById('viScanBtn').addEventListener('click', (e) => {
-  const btn = e.target;
+function loadViStocks(silent) {
+  const btn = document.getElementById('viScanBtn');
   const tbody = document.querySelector('#viStocks tbody');
-  btn.disabled = true;
-  btn.textContent = '조회 중...';
+  if (!silent) { btn.disabled = true; btn.textContent = '조회 중...'; }
 
-  fetch('/api/vi-stocks')
+  return fetch('/api/vi-stocks')
     .then(res => res.json())
     .then(data => {
       if (!data.ok) {
-        tbody.innerHTML = '<tr><td class="empty">조회 실패: ' + (data.error || '알 수 없는 오류') + '</td></tr>';
+        if (!silent) tbody.innerHTML = '<tr><td class="empty">조회 실패: ' + (data.error || '알 수 없는 오류') + '</td></tr>';
         return;
       }
-      tbody.innerHTML = data.stocks.length
-        ? data.stocks.map(r => '<tr class="clickable" data-code="' + r.code + '" data-name="' + r.name + '" data-price="' + r.price + '" data-rate="' + r.rate + '">' +
-            '<td>' + r.name + '</td>' +
-            '<td>' + fmt(r.price) + '</td>' +
-            '<td class="up">' + (r.rate >= 0 ? '+' : '') + r.rate.toFixed(2) + '%</td>' +
-          '</tr>').join('')
-        : '<tr><td class="empty">현재 VI 발동 종목 없음</td></tr>';
-
-      tbody.querySelectorAll('tr.clickable').forEach(tr => {
-        tr.addEventListener('click', () => {
-          openStockModal({
-            code: tr.dataset.code, name: tr.dataset.name,
-            price: Number(tr.dataset.price), rate: Number(tr.dataset.rate),
-            buyReq: 0, selReq: 0,
-          });
-        });
+      patchTable(tbody, data.stocks, r => [
+        r.name,
+        fmt(r.price),
+        '<span class="up">' + (r.rate >= 0 ? '+' : '') + r.rate.toFixed(2) + '%</span>',
+      ], '현재 VI 발동 종목 없음', item => {
+        openStockModal({ code: item.code, name: item.name, price: item.price, rate: item.rate, buyReq: 0, selReq: 0 });
       });
     })
     .catch(err => {
-      tbody.innerHTML = '<tr><td class="empty">조회 요청 오류: ' + err.message + '</td></tr>';
+      if (!silent) tbody.innerHTML = '<tr><td class="empty">조회 요청 오류: ' + err.message + '</td></tr>';
     })
     .finally(() => {
-      btn.disabled = false;
-      btn.textContent = '새로고침';
+      if (!silent) { btn.disabled = false; btn.textContent = '새로고침'; }
     });
-});
+}
+
+document.getElementById('viScanBtn').addEventListener('click', () => loadViStocks(false));
+
+// VI 발동종목은 15초마다 자동 갱신 (ka10054 단일 호출, TR당 초당1건 제한에 여유있게 준수)
+loadViStocks(true);
+setInterval(() => {
+  if (document.hidden) return;
+  loadViStocks(true);
+}, 15000);
 
 document.getElementById('patternScanBtn').addEventListener('click', (e) => {
   const btn = e.target;
@@ -1050,7 +1084,7 @@ load();
 let mainRefreshTimer = setInterval(() => {
   if (document.hidden) return; // 백그라운드면 새로고침 스킵
   load();
-}, 20000); // 20초마다 화면 갱신 (D1만 읽어오는 거라 키움 제한과 무관, 저장 자체는 cron이 2분마다)
+}, 10000); // 10초마다 화면 갱신 (D1만 읽어오는 거라 키움 제한과 무관, 저장 자체는 cron이 2분마다)
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) load(); // 화면 복귀 시 즉시 최신화
