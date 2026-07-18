@@ -16,6 +16,8 @@
  * (코드 안에서도 09:01~15:15 KST가 아니면 스킵하므로 이중 안전장치)
  */
 
+import { unzipSync } from "fflate";
+
 const MIN_RATE = 5;
 const MAX_RATE = 15;
 
@@ -292,6 +294,15 @@ function renderDashboard() {
     flex:1; text-align:center; padding:8px 6px; border-radius:8px;
     background:#2a2a2a; color:#aaa; font-size:12px; text-decoration:none;
   }
+  #modalNewsSummary { margin-bottom:12px; }
+  .newsItem {
+    display:block; background:#151515; border-radius:8px; padding:8px 10px;
+    margin-bottom:6px; text-decoration:none;
+  }
+  .newsItemTitle { font-size:12px; color:#eee; font-weight:600; margin-bottom:2px; }
+  .newsItemDesc { font-size:11px; color:#888; line-height:1.4; }
+  #modalDartSummary { margin-bottom:12px; }
+  .dartItem { border-left:2px solid #ffd43b; }
   .highGap { font-size:11px; color:#888; margin-top:2px; }
   .sellWarning { font-size:12px; color:#ff8787; background:#2a1616; border-radius:8px; padding:8px 10px; margin-top:8px; }
   .sellOk { font-size:12px; color:#69db7c; background:#16241c; border-radius:8px; padding:8px 10px; margin-top:8px; }
@@ -476,6 +487,8 @@ function renderDashboard() {
       <div class="modalSub"><span id="modalPrice">-</span><span class="up" id="modalRate">-</span></div>
       <div id="modalOrderBook"></div>
       <div id="modalNewsLinks"></div>
+      <div id="modalNewsSummary"></div>
+      <div id="modalDartSummary"></div>
       <div id="modalDetail"></div>
       <div class="periodRow" id="periodRow">
         <button class="periodBtn" data-period="T">틱</button>
@@ -546,15 +559,14 @@ function openStockModal(item) {
   modalPrice.textContent = fmt(item.price) + '원';
   modalRate.textContent = '+' + Number(item.rate).toFixed(2) + '%';
   renderOrderBook(item.buyReq, item.selReq);
-  renderNewsLinks(item.name);
+  renderNewsLinks(item.name, item.code);
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '1'));
   modalPriceBtn.onclick = () => { currentModalView = 'quote'; showQuote(item.code); };
   modalRiskBtn.onclick = () => { currentModalView = 'risk'; showRiskLevels(item.code); };
   modalOverlay.classList.add('open');
   setHeavyButtonsDisabled(true);
   chartFullPrices = []; chartWindowSize = 0; chartOffsetFromEnd = 0;
-connectPriceStream(item.code);
-showChart(item.code, '1');
+  showChart(item.code, '1');
   startChartAutoRefresh();
 }
 
@@ -613,8 +625,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 function closeStockModal() {
-disconnectPriceStream();
-modalOverlay.classList.remove('open');
+  modalOverlay.classList.remove('open');
   stopChartAutoRefresh();
   setHeavyButtonsDisabled(false);
 }
@@ -641,13 +652,46 @@ function renderOrderBook(buyReq, selReq) {
     '</div>';
 }
 
-function renderNewsLinks(name) {
+function renderNewsLinks(name, code) {
   const el = document.getElementById('modalNewsLinks');
   const q = encodeURIComponent(name);
   const dartQ = encodeURIComponent(name + ' 공시 dart');
   el.innerHTML =
     '<a class="newsLink" href="https://search.naver.com/search.naver?where=news&query=' + q + '" target="_blank" rel="noopener">📰 뉴스 검색</a>' +
     '<a class="newsLink" href="https://search.naver.com/search.naver?query=' + dartQ + '" target="_blank" rel="noopener">📋 DART 공시</a>';
+
+  const summaryEl = document.getElementById('modalNewsSummary');
+  summaryEl.innerHTML = '<div class="detailLoading">뉴스 불러오는 중...</div>';
+  fetch('/api/news?q=' + encodeURIComponent(name))
+    .then(res => res.json())
+    .then(data => {
+      if (!data.ok || !data.items.length) {
+        summaryEl.innerHTML = '';
+        return;
+      }
+      summaryEl.innerHTML = data.items.map(item =>
+        '<a class="newsItem" href="' + item.link + '" target="_blank" rel="noopener">' +
+          '<div class="newsItemTitle">' + item.title + '</div>' +
+          '<div class="newsItemDesc">' + item.description + '</div>' +
+        '</a>'
+      ).join('');
+    })
+    .catch(() => { summaryEl.innerHTML = ''; });
+
+  const dartEl = document.getElementById('modalDartSummary');
+  dartEl.innerHTML = '';
+  fetch('/api/disclosures?code=' + code)
+    .then(res => res.json())
+    .then(data => {
+      if (!data.ok || !data.items || !data.items.length) return;
+      dartEl.innerHTML = data.items.map(item =>
+        '<a class="newsItem dartItem" href="' + item.link + '" target="_blank" rel="noopener">' +
+          '<div class="newsItemTitle">📋 ' + item.title + '</div>' +
+          '<div class="newsItemDesc">' + item.date + '</div>' +
+        '</a>'
+      ).join('');
+    })
+    .catch(() => {});
 }
 
 function showRiskLevels(code, silent) {
@@ -674,73 +718,11 @@ function showRiskLevels(code, silent) {
     });
 }
 
-let priceSocket = null;
-let priceSocketCode = null;
-
-function connectPriceStream(code) {
-disconnectPriceStream();
-priceSocketCode = code;
-updateLiveStatusBadge(code, 'connecting', '🔄 연결 중...');
-try {
-const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-priceSocket = new WebSocket(proto + '://' + location.host + '/ws/price?code=' + code);
-priceSocket.onmessage = (evt) => {
-let msg;
-try { msg = JSON.parse(evt.data); } catch (e) { return; }
-if (msg.type === 'tick') {
-console.log('[실시간 체결]', code, msg);
-const t = new Date(msg.ts).toLocaleTimeString('ko-KR');
-updateLiveStatusBadge(code, 'tick', '⚡ 실시간 체결 수신 ' + t);
-} else if (msg.type === 'status') {
-if (msg.status === 'connected') {
-updateLiveStatusBadge(code, 'connected', '✅ 실시간 연결됨 (체결 대기 중)');
-} else {
-updateLiveStatusBadge(code, 'error', '⚠️ 연결 안됨 (재연결 중...)');
-}
-} else if (msg.type === 'error') {
-console.warn('[실시간 시세 오류]', msg.message);
-updateLiveStatusBadge(code, 'error', '⚠️ ' + msg.message);
-}
-};
-priceSocket.onerror = () => { updateLiveStatusBadge(code, 'error', '⚠️ 연결 오류'); };
-priceSocket.onclose = () => { priceSocket = null; };
-} catch (e) {
-priceSocket = null;
-updateLiveStatusBadge(code, 'error', '⚠️ 연결 실패');
-}
-}
-
-function disconnectPriceStream() {
-if (priceSocket) {
-try { priceSocket.close(); } catch (e) {}
-priceSocket = null;
-}
-priceSocketCode = null;
-const badge = document.getElementById('liveTickBadge');
-if (badge) badge.remove();
-}
-
-function updateLiveStatusBadge(code, state, text) {
-if (currentModalCode !== code) return;
-let badge = document.getElementById('liveTickBadge');
-if (!badge) {
-badge = document.createElement('div');
-badge.id = 'liveTickBadge';
-badge.style.cssText = 'font-size:11px;margin-top:4px;display:flex;align-items:center;gap:6px;';
-modalDetail.parentElement.insertBefore(badge, modalDetail);
-}
-const color = state === 'error' ? '#ff8787' : (state === 'connecting' ? '#888' : '#69db7c');
-badge.innerHTML = '<span style="color:' + color + '">' + text + '</span>' +
-'<button id="liveReconnectBtn" style="background:#2a2a2a;color:#4d9fff;border:none;border-radius:6px;padding:2px 8px;font-size:11px;cursor:pointer;">🔄 재연결</button>';
-const btn = document.getElementById('liveReconnectBtn');
-if (btn) btn.onclick = () => connectPriceStream(code);
-}
-
 function showQuote(code, silent) {
   if (!silent) modalDetail.innerHTML = '<div class="detailLoading">불러오는 중...</div>';
   fetch('/api/quote?code=' + code)
     .then(res => res.json())
-        .then(data => {
+    .then(data => {
       if (!data.ok) {
         if (!silent) modalDetail.innerHTML = '<div class="detailError">조회 실패: ' + (data.error || '알 수 없는 오류') + '</div>';
         return;
@@ -1459,201 +1441,6 @@ function kiwoomHost(env) {
     : "https://mockapi.kiwoom.com"; // 기본값: 모의투자
 }
 
-// ============================================================
-// 실시간 시세 스트리밍 (Durable Object + 키움 WebSocket 릴레이)
-// ============================================================
-// 미검증 구간: REG 메시지의 grp_no/refresh 필드, 체결 데이터의 FID 번호는
-// 공개 예제 기준으로 작성했습니다. 실전 배포 전 브라우저 콘솔에 찍히는
-// raw 데이터를 보고 FID_MAP을 맞춰야 정확한 값이 표시됩니다.
-const FID_MAP = {
-    price: "10",
-    rate: "12",
-    volume: "15",
-};
-
-export class PriceStreamDO {
-    constructor(state, env) {
-          this.state = state;
-          this.env = env;
-          this.code = null;
-          this.clients = new Set();
-          this.kiwoomWs = null;
-          this.kiwoomLoggedIn = false;
-          this.connecting = false;
-          this.reconnectAttempt = 0;
-          this.pingTimer = null;
-    }
-  
-  async fetch(request) {
-    const url = new URL(request.url);
-    const code = url.searchParams.get("code");
-    if (!code) return new Response("code missing", { status: 400 });
-    this.code = code;
-    
-    if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("not a websocket upgrade", { status: 426 });
-    }
-    
-    const pair = new WebSocketPair();
-    const client = pair[0];
-    const server = pair[1];
-    server.accept();
-    this.clients.add(server);
-    
-    server.addEventListener("close", () => {
-      this.clients.delete(server);
-      if (this.clients.size === 0) this.teardownKiwoomWs();
-    });
-    server.addEventListener("error", () => {
-      this.clients.delete(server);
-    });
-    
-    this.ensureKiwoomWs().catch((e) => {
-      this.broadcast({ type: "error", message: String(e.message || e) });
-    });
-    
-    return new Response(null, { status: 101, webSocket: client });
-  }
-  
-  async ensureKiwoomWs() {
-    if (this.kiwoomWs || this.connecting) return;
-    this.connecting = true;
-    try {
-      const host = this.env.KIWOOM_MOCK === "false" ? "api.kiwoom.com" : "mockapi.kiwoom.com";
-      const wsUrl = "wss://" + host + ":10000/api/dostk/websocket";
-      
-      const resp = await fetch(wsUrl, { headers: { Upgrade: "websocket" } });
-      const ws = resp.webSocket;
-      if (!ws) throw new Error("kiwoom ws upgrade failed");
-      ws.accept();
-      this.kiwoomWs = ws;
-      this.kiwoomLoggedIn = false;
-      
-      const token = await kiwoomIssueToken(this.env);
-      
-      ws.addEventListener("message", (evt) => this.onKiwoomMessage(evt));
-      ws.addEventListener("close", () => this.onKiwoomClose());
-      ws.addEventListener("error", () => this.onKiwoomClose());
-      
-      ws.send(JSON.stringify({ trnm: "LOGIN", token }));
-    } finally {
-      this.connecting = false;
-    }
-  }
-  
-  onKiwoomMessage(evt) {
-    let msg;
-    try {
-      msg = JSON.parse(evt.data);
-    } catch (e) {
-      return;
-    }
-    
-    if (msg.trnm === "PING") {
-      this.kiwoomWs.send(JSON.stringify({ trnm: "PONG" }));
-      return;
-    }
-    
-    if (msg.trnm === "LOGIN") {
-      const ok = msg.return_code === 0 || msg.return_code === "0";
-      if (ok) {
-        this.kiwoomLoggedIn = true;
-        this.reconnectAttempt = 0;
-        this.startPing();
-        this.kiwoomWs.send(JSON.stringify({
-          trnm: "REG",
-          grp_no: "1",
-          refresh: "1",
-          data: [{ item: [this.code], type: ["0B"] }],
-        }));
-        this.broadcast({ type: "status", status: "connected" });
-      } else {
-        this.broadcast({ type: "error", message: "kiwoom ws login failed: " + JSON.stringify(msg) });
-        this.teardownKiwoomWs();
-        this.scheduleReconnect();
-      }
-      return;
-    }
-    
-    if (msg.trnm === "REAL" && Array.isArray(msg.data)) {
-      for (const item of msg.data) {
-        if (item.type !== "0B") continue;
-        const v = item.values || {};
-        this.broadcast({
-          type: "tick",
-          code: this.code,
-          price: Math.abs(parseInt(String(v[FID_MAP.price] || "0").replace(/[^0-9-]/g, ""), 10)) || 0,
-          rate: parseFloat(v[FID_MAP.rate] || "0") || 0,
-          volume: Math.abs(parseInt(String(v[FID_MAP.volume] || "0").replace(/[^0-9-]/g, ""), 10)) || 0,
-          raw: v,
-          ts: Date.now(),
-        });
-      }
-      return;
-    }
-    
-    this.broadcast({ type: "debug", raw: msg });
-  }
-  
-  onKiwoomClose() {
-    this.kiwoomWs = null;
-    this.kiwoomLoggedIn = false;
-    this.stopPing();
-    if (this.clients.size > 0) {
-      this.broadcast({ type: "status", status: "disconnected" });
-      this.scheduleReconnect();
-    }
-  }
-  
-  scheduleReconnect() {
-    this.reconnectAttempt = Math.min(this.reconnectAttempt + 1, 5);
-    const delay = 2000 * this.reconnectAttempt;
-    setTimeout(() => {
-      if (this.clients.size > 0) this.ensureKiwoomWs().catch(() => {});
-    }, delay);
-  }
-  
-  startPing() {
-    this.stopPing();
-    this.pingTimer = setInterval(() => {
-      if (this.kiwoomWs && this.kiwoomLoggedIn) {
-        try {
-          this.kiwoomWs.send(JSON.stringify({ trnm: "PING" }));
-        } catch (e) {}
-      }
-    }, 30000);
-  }
-  
-  stopPing() {
-    if (this.pingTimer) {
-      clearInterval(this.pingTimer);
-      this.pingTimer = null;
-    }
-  }
-  
-  teardownKiwoomWs() {
-    this.stopPing();
-    if (this.kiwoomWs) {
-      try {
-        this.kiwoomWs.close();
-      } catch (e) {}
-      this.kiwoomWs = null;
-    }
-    this.kiwoomLoggedIn = false;
-  }
-  
-  broadcast(payload) {
-    const msg = JSON.stringify(payload);
-    for (const client of this.clients) {
-      try {
-        client.send(msg);
-      } catch (e) {
-        this.clients.delete(client);
-      }
-    }
-  }
-}
-
 // 토큰 캐시 (Worker 인스턴스가 살아있는 동안 재사용 -> 5초 자동갱신 차트가 매번 토큰을 새로 받지 않게 함)
 let cachedToken = null;
 let cachedTokenExpiryMs = 0;
@@ -1739,6 +1526,112 @@ async function kiwoomSellOrder(env, code) {
 }
 
 // ---------- 키움 REST API: 현재가(시세표성정보) ----------
+// ---------- 네이버 뉴스 검색 API ----------
+function stripHtml(s) {
+  return String(s || "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#39;/g, "'");
+}
+
+// ---------- DART: corp_code 매핑 동기화 + 공시 조회 ----------
+function parseCorpCodeXml(xmlText) {
+  const entries = [];
+  const re = /<list>\s*<corp_code>([^<]*)<\/corp_code>\s*<corp_name>([^<]*)<\/corp_name>\s*<stock_code>([^<]*)<\/stock_code>/g;
+  let m;
+  while ((m = re.exec(xmlText)) !== null) {
+    const stockCode = m[3].trim();
+    if (stockCode.length === 6) {
+      entries.push({ corp_code: m[1].trim(), corp_name: m[2].trim(), stock_code: stockCode });
+    }
+  }
+  return entries;
+}
+
+async function syncDartCorpCodes(env) {
+  if (!env.DART_API_KEY) {
+    throw new Error("DART_API_KEY 시크릿이 설정되지 않았습니다.");
+  }
+  const res = await fetch(`https://opendart.fss.or.kr/api/corpCode.xml?crtfc_key=${env.DART_API_KEY}`);
+  if (!res.ok) {
+    throw new Error(`DART corpCode 다운로드 실패: ${res.status}`);
+  }
+  const zipBytes = new Uint8Array(await res.arrayBuffer());
+  const unzipped = unzipSync(zipBytes);
+  const xmlBytes = unzipped["CORPCODE.xml"];
+  if (!xmlBytes) {
+    throw new Error("zip 안에 CORPCODE.xml이 없습니다: " + Object.keys(unzipped).join(", "));
+  }
+  const xmlText = new TextDecoder("utf-8").decode(xmlBytes);
+  const entries = parseCorpCodeXml(xmlText);
+  if (entries.length === 0) {
+    throw new Error("파싱된 종목이 0개입니다. XML 형식이 예상과 다를 수 있습니다.");
+  }
+
+  const stmt = env.DB.prepare(
+    `INSERT OR REPLACE INTO dart_corp_codes (stock_code, corp_code, corp_name) VALUES (?, ?, ?)`
+  );
+  const CHUNK = 50;
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    const chunk = entries.slice(i, i + CHUNK).map((e) => stmt.bind(e.stock_code, e.corp_code, e.corp_name));
+    await env.DB.batch(chunk);
+  }
+  return entries.length;
+}
+
+async function getDartCorpCode(env, stockCode) {
+  const row = await env.DB.prepare(`SELECT corp_code, corp_name FROM dart_corp_codes WHERE stock_code = ?`)
+    .bind(stockCode)
+    .first();
+  return row || null;
+}
+
+async function fetchDartDisclosures(env, corpCode) {
+  const end = todayYYYYMMDD();
+  const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const start = startDate.toISOString().slice(0, 10).replace(/-/g, "");
+  const url =
+    `https://opendart.fss.or.kr/api/list.json?crtfc_key=${env.DART_API_KEY}` +
+    `&corp_code=${corpCode}&bgn_de=${start}&end_de=${end}&page_count=5`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (data.status !== "000" && data.status !== "013") {
+    // 013 = 조회된 데이터 없음 (정상 케이스)
+    throw new Error(`DART 공시 조회 실패: ${JSON.stringify(data)}`);
+  }
+  return (data.list || []).map((item) => ({
+    title: item.report_nm,
+    date: item.rcept_dt,
+    link: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${item.rcept_no}`,
+  }));
+}
+
+async function naverNewsSearch(env, query) {
+  if (!env.NAVER_CLIENT_ID || !env.NAVER_CLIENT_SECRET) {
+    throw new Error("NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 시크릿이 설정되지 않았습니다.");
+  }
+  const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(query)}&display=3&sort=date`;
+  const res = await fetch(url, {
+    headers: {
+      "X-Naver-Client-Id": env.NAVER_CLIENT_ID,
+      "X-Naver-Client-Secret": env.NAVER_CLIENT_SECRET,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`네이버 뉴스 API 실패: ${JSON.stringify(data)}`);
+  }
+  return (data.items || []).map((item) => ({
+    title: stripHtml(item.title),
+    description: stripHtml(item.description),
+    link: item.originallink || item.link,
+    pubDate: item.pubDate,
+  }));
+}
+
 async function kiwoomQuote(env, token, code) {
   const res = await fetch(`${kiwoomHost(env)}/api/dostk/mrkcond`, {
     method: "POST",
@@ -2075,14 +1968,41 @@ self.addEventListener('fetch', (e) => {
         }
       }
 
-      if (url.pathname === "/ws/price") {
-        const code = url.searchParams.get("code");
-        if (!code) return new Response("code missing", { status: 400 });
-        const id = env.PRICE_STREAM.idFromName(code);
-      const stub = env.PRICE_STREAM.get(id);
-        return stub.fetch(request);
+      if (url.pathname === "/api/admin/sync-dart-codes") {
+        try {
+          const count = await syncDartCorpCodes(env);
+          return Response.json({ ok: true, synced: count });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
       }
-      
+
+      if (url.pathname === "/api/disclosures") {
+        try {
+          const code = url.searchParams.get("code");
+          if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
+          const corp = await getDartCorpCode(env, code);
+          if (!corp) {
+            return Response.json({ ok: false, error: "DART corp_code 매핑이 없습니다. /api/admin/sync-dart-codes를 먼저 실행하세요." });
+          }
+          const items = await fetchDartDisclosures(env, corp.corp_code);
+          return Response.json({ ok: true, corpName: corp.corp_name, items });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/news") {
+        try {
+          const q = url.searchParams.get("q");
+          if (!q) return Response.json({ ok: false, error: "q 누락" }, { status: 400 });
+          const items = await naverNewsSearch(env, q);
+          return Response.json({ ok: true, items });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
       if (url.pathname === "/api/quote") {
         try {
           const code = url.searchParams.get("code");
