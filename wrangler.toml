@@ -13,6 +13,14 @@ database_id = "e4bd43bd-8692-45ad-8e99-28519cc78520"
 # (키움 TR 제한 초당1건에는 전혀 안 걸림. D1 무료플랜 일 5만건 쓰기 제한 감안해서 2분으로 설정)
 crons = ["*/2 0-6 * * 1-5"]
 
+[[durable_objects.bindings]]
+name = "PRICE_STREAM"
+class_name = "PriceStreamDO"
+
+[[migrations]]
+tag = "v1-realtime-ws"
+new_classes = ["PriceStreamDO"]
+
 [vars]
 # 민감하지 않은 값만 여기 둠. "true" = 모의투자, "false" = 실전투자
 KIWOOM_MOCK = "true"
