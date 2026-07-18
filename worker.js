@@ -350,6 +350,9 @@ function renderDashboard() {
   .modalBtn.cancel { background:transparent; color:#888; margin-bottom:0; padding:10px; }
   .streakBoard h2 { color:#ffd43b; }
   .streakBoard.streak5 h2 { color:#69db7c; }
+  .topPicksBoard { border:1px solid #ffd43b; background:linear-gradient(180deg,#1c1a0f,#1c1c1c); }
+  .topPicksBoard h2 { color:#ffd43b; }
+  .topPicksBoard tr.clickable:active { background:#2a2410; }
   .intervalTag { font-size:11px; color:#888; font-weight:normal; }
   #goldenWindowBanner {
     background:linear-gradient(90deg,#ff6b6b,#ffa94d); color:#111; font-weight:600;
@@ -387,6 +390,14 @@ function renderDashboard() {
   <h1>🔥 급등주 스크리너</h1>
   <div class="sub" id="ts">불러오는 중...</div>
   <div id="goldenWindowBanner" style="display:none;"></div>
+
+  <div class="board topPicksBoard">
+    <h2>🏆 오늘의 TOP 10</h2>
+    <table id="topPicks">
+      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>점수</th></tr></thead>
+      <tbody><tr><td class="empty">데이터 없음</td></tr></tbody>
+    </table>
+  </div>
 
   <div class="board">
     <div class="boardHeadRow">
@@ -949,6 +960,18 @@ function computeMomentumScores(latest, streak3Codes, streak5Codes) {
 
 // 신호 점수: 4개 조건 체크(검증된 전략 아님, 참고용 필터일 뿐)
 // 1) 체결강도 105 이상  2) 매수잔량>매도잔량  3) 거래량 상위 30% 이내  4) 3연속 이상 상승중
+// 지금까지 만든 지표(신호점수/종합점수/연속상승) + 저가 동전주 감점(작전주 위험, 나무위키 단타매매 기법)
+function computeTopPicks(latest, streak5Codes) {
+  return [...latest]
+    .map(r => {
+      let score = (r.signalScore || 0) * 10 + (r.momentumScore || 0) * 5 + (streak5Codes.has(r.code) ? 3 : 0);
+      if ((r.price || 0) < 2000) score -= 3; // 천원대 동전주는 작전주/불안정 위험 높다고 알려짐
+      return { ...r, topScore: score };
+    })
+    .sort((a, b) => b.topScore - a.topScore)
+    .slice(0, 10);
+}
+
 function computeSignalScores(latest, streak3Codes, streak5Codes) {
   if (!latest.length) return;
   const volSorted = [...latest].map(r => r.volume || 0).sort((a, b) => b - a);
@@ -1112,6 +1135,15 @@ async function load() {
   computeMomentumScores(latestList, streak3Codes, streak5Codes);
   computeSignalScores(latestList, streak3Codes, streak5Codes);
 
+  const topPicks = computeTopPicks(latestList, streak5Codes);
+  const topPicksBody = document.querySelector('#topPicks tbody');
+  patchTable(topPicksBody, topPicks, r => [
+    r.name,
+    fmt(r.price),
+    '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
+    '🔥'.repeat(Math.max(1, Math.min(5, Math.round(r.topScore / 10)))),
+  ], '데이터 없음', item => copyCodeAndLaunchApp(item.code, item.name));
+
   // 클릭용 종목 정보 매핑 (streak5 + streak3 + top5 + all 합쳐서)
   byCodeMap = {};
   [...data.streak5, ...data.streak3, ...data.risingTop5, ...data.latest].forEach(r => {
@@ -1122,6 +1154,14 @@ async function load() {
   });
 
   renderAllTable();
+}
+
+function copyCodeAndLaunchApp(code, name) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(code).catch(() => {});
+  }
+  if (IS_MOBILE) launchKiwoomApp();
+  else alert(name + ' (' + code + ') 코드가 복사되었습니다.');
 }
 
 document.getElementById('reloadBtn').addEventListener('click', (e) => {
