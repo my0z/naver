@@ -364,6 +364,7 @@ function renderDashboard() {
   }
   #reloadBtn.spinning { animation:spin 0.6s linear; }
   @keyframes spin { from{ transform:translateY(-50%) rotate(0deg); } to{ transform:translateY(-50%) rotate(360deg); } }
+  #collectBtn:disabled, #patternScanBtn:disabled { opacity:0.35; cursor:not-allowed; }
   #collectBtn {
     position:fixed; right:14px; top:calc(50% + 30px); transform:translateY(-50%);
     width:50px; height:50px; border-radius:50%; border:none;
@@ -467,8 +468,8 @@ function renderDashboard() {
       <div id="modalDetail"></div>
       <div class="periodRow" id="periodRow">
         <button class="periodBtn" data-period="T">틱</button>
-        <button class="periodBtn" data-period="1">1분</button>
-        <button class="periodBtn active" data-period="5">5분</button>
+        <button class="periodBtn active" data-period="1">1분</button>
+        <button class="periodBtn" data-period="5">5분</button>
         <button class="periodBtn" data-period="15">15분</button>
         <button class="periodBtn" data-period="30">30분</button>
         <button class="periodBtn" data-period="D">일봉</button>
@@ -527,7 +528,7 @@ function openStockModal(item) {
   }
   currentModalName = item.name;
   currentModalCode = item.code;
-  currentModalPeriod = '5';
+  currentModalPeriod = '1';
   currentModalView = 'chart';
   modalName.textContent = item.name;
   modalCodeBadge.textContent = '코드: ' + item.code + ' (복사됨)';
@@ -535,13 +536,21 @@ function openStockModal(item) {
   modalRate.textContent = '+' + Number(item.rate).toFixed(2) + '%';
   renderOrderBook(item.buyReq, item.selReq);
   renderNewsLinks(item.name);
-  periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '5'));
+  periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '1'));
   modalPriceBtn.onclick = () => { currentModalView = 'quote'; showQuote(item.code); };
   modalRiskBtn.onclick = () => { currentModalView = 'risk'; showRiskLevels(item.code); };
   modalOverlay.classList.add('open');
+  setHeavyButtonsDisabled(true);
   chartFullPrices = []; chartWindowSize = 0; chartOffsetFromEnd = 0;
-  showChart(item.code, '5');
+  showChart(item.code, '1');
   startChartAutoRefresh();
+}
+
+function setHeavyButtonsDisabled(disabled) {
+  const patternBtn = document.getElementById('patternScanBtn');
+  const collectBtn = document.getElementById('collectBtn');
+  if (patternBtn) patternBtn.disabled = disabled;
+  if (collectBtn) collectBtn.disabled = disabled;
 }
 
 periodRow.addEventListener('click', (e) => {
@@ -594,6 +603,7 @@ document.addEventListener('visibilitychange', () => {
 function closeStockModal() {
   modalOverlay.classList.remove('open');
   stopChartAutoRefresh();
+  setHeavyButtonsDisabled(false);
 }
 
 modalCancelBtn.addEventListener('click', closeStockModal);
