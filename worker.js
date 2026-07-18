@@ -416,7 +416,6 @@ function renderDashboard() {
       <h2>🔍 지난 1주일 패턴 유사 종목</h2>
       <button id="patternScanBtn" class="sortBtn">스캔 시작</button>
     </div>
-    <div class="sub" style="margin:0 0 8px;">오늘 거래량 상위 15종목의 장중 흐름을 지난 1주일과 비교합니다 (20~30초 소요, 참고용 · 매수 신호 아님)</div>
     <table id="patternScan">
       <thead><tr><th>종목</th><th>유사한 날</th><th>유사도</th></tr></thead>
       <tbody><tr><td class="empty">스캔 시작 버튼을 눌러주세요</td></tr></tbody>
@@ -441,7 +440,6 @@ function renderDashboard() {
   <div class="board">
     <div class="boardHeadRow">
       <h2>전체 목록 (등락률 5~15%)</h2>
-      <div class="sub" style="margin:0 0 8px;">⚠️ '종합점수'/'신호'는 여러 지표를 임의로 조합한 참고용 필터이며, 검증된 전략이 아니고 수익을 보장하지 않습니다. 🔥 개수는 체결강도105+/매수잔량우위/거래량상위30%/거래대금상위30%/연속상승 5개 중 몇 개 충족했는지입니다.</div>
       <div class="sortToggle">
         <button class="sortBtn active" id="sortByMomentum">종합점수순</button>
         <button class="sortBtn" id="sortByRate">등락률순</button>
@@ -646,7 +644,6 @@ function showRiskLevels(code, silent) {
         '<div>14일 ATR<b>' + fmt(Math.round(data.atr)) + '원</b></div>' +
         '<div class="stopLoss">손절 라인 (-' + riskPct + '%)<b>' + fmt(data.stopLoss) + '원</b></div>' +
         '<div class="takeProfit">익절 라인 (+' + rewardPct + '%)<b>' + fmt(data.takeProfit) + '원</b></div>' +
-        '<div class="riskNote">⚠️ 최근 14일 일봉 변동성(ATR) × 1.5/2 배수로 계산한 참고값입니다. 실제 손절/익절은 본인 리스크 허용범위에 맞게 조정하세요. 매매 신호가 아닙니다.</div>' +
         '</div>';
     })
     .catch(err => {
@@ -1275,7 +1272,7 @@ function updateGoldenWindowBanner() {
   const banner = document.getElementById('goldenWindowBanner');
   if (minutes >= 9 * 60 && minutes <= 9 * 60 + 30) {
     banner.style.display = 'block';
-    banner.textContent = '⏰ 지금은 단타 활발 시간대(09:00~09:30)입니다 — 거래대금이 가장 활발하게 들어오는 구간';
+    banner.textContent = '⏰ 09:00~09:30 활발 시간대';
   } else {
     banner.style.display = 'none';
   }
