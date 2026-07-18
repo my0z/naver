@@ -293,6 +293,8 @@ function renderDashboard() {
     background:#2a2a2a; color:#aaa; font-size:12px; text-decoration:none;
   }
   .highGap { font-size:11px; color:#888; margin-top:2px; }
+  .sellWarning { font-size:12px; color:#ff8787; background:#2a1616; border-radius:8px; padding:8px 10px; margin-top:8px; }
+  .sellOk { font-size:12px; color:#69db7c; background:#16241c; border-radius:8px; padding:8px 10px; margin-top:8px; }
   .highGap b { color:#ffa94d; }
   #modalDetail { margin-bottom:14px; }
   .detailLoading, .detailError { color:#888; font-size:13px; padding:8px 0; }
@@ -319,6 +321,17 @@ function renderDashboard() {
   .sortToggle { display:flex; gap:6px; }
   .sortBtn { background:#2a2a2a; color:#aaa; border:none; border-radius:6px; padding:5px 10px; font-size:11px; cursor:pointer; }
   .sortBtn.active { background:#ff6b6b; color:#111; font-weight:600; }
+  .tradeForm { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; background:#151515; padding:10px; border-radius:10px; }
+  .tradeForm input {
+    flex:1; min-width:80px; background:#1c1c1c; border:1px solid #333; border-radius:6px;
+    padding:8px; color:#eee; font-size:13px;
+  }
+  .tradeFormBtns { width:100%; display:flex; gap:8px; margin-top:4px; }
+  #tradeStatsBar { display:flex; gap:14px; flex-wrap:wrap; }
+  #tradeStatsBar b { color:#eee; }
+  .tradeDelBtn { color:#666; cursor:pointer; font-size:14px; }
+  .pnlPositive { color:#ff6b6b; }
+  .pnlNegative { color:#4d9fff; }
   .modalBtn {
     display:block; width:100%; box-sizing:border-box; text-align:center;
     padding:14px; margin-bottom:10px; border-radius:10px; border:none;
@@ -326,6 +339,12 @@ function renderDashboard() {
   }
   .modalBtn.chart { background:#2a2a2a; color:#eee; }
   .modalBtn.price { background:#2a2a2a; color:#eee; }
+  .modalBtn.risk { background:#2a2a2a; color:#ffa94d; }
+  .riskGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; background:#151515; border-radius:10px; padding:10px 12px; font-size:12px; color:#999; margin-bottom:12px; }
+  .riskGrid b { display:block; font-size:15px; margin-top:2px; }
+  .riskGrid .stopLoss b { color:#4d9fff; }
+  .riskGrid .takeProfit b { color:#ff6b6b; }
+  .riskNote { font-size:10px; color:#666; margin-top:6px; grid-column:1 / -1; }
   .modalBtn.buy { background:#ff6b6b; color:#111; }
   .modalBtn.sell { background:#4d9fff; color:#111; }
   .modalBtn.cancel { background:transparent; color:#888; margin-bottom:0; padding:10px; }
@@ -367,6 +386,30 @@ function renderDashboard() {
   <h1>🔥 급등주 스크리너</h1>
   <div class="sub" id="ts">불러오는 중...</div>
   <div id="goldenWindowBanner" style="display:none;"></div>
+
+  <div class="board">
+    <div class="boardHeadRow">
+      <h2>📒 내 매매 기록</h2>
+      <button id="tradeLogAddBtn" class="sortBtn">기록 추가</button>
+    </div>
+    <div id="tradeStatsBar" class="sub" style="margin:0 0 8px;">기록 없음</div>
+    <div id="tradeLogForm" style="display:none;" class="tradeForm">
+      <input type="text" id="tlName" placeholder="종목명" />
+      <input type="text" id="tlCode" placeholder="종목코드(선택)" />
+      <input type="number" id="tlBuy" placeholder="매수가" />
+      <input type="number" id="tlSell" placeholder="매도가" />
+      <input type="number" id="tlQty" placeholder="수량" />
+      <input type="text" id="tlNote" placeholder="메모(선택)" />
+      <div class="tradeFormBtns">
+        <button id="tradeLogSaveBtn" class="sortBtn active">저장</button>
+        <button id="tradeLogCancelBtn" class="sortBtn">취소</button>
+      </div>
+    </div>
+    <table id="tradeLog">
+      <thead><tr><th>종목</th><th>매수/매도가</th><th>수량</th><th>손익</th><th></th></tr></thead>
+      <tbody><tr><td class="empty">기록이 없습니다</td></tr></tbody>
+    </table>
+  </div>
 
   <div class="board">
     <div class="boardHeadRow">
@@ -435,6 +478,7 @@ function renderDashboard() {
         <button class="periodBtn" data-period="M">월봉</button>
       </div>
       <button class="modalBtn price" id="modalPriceBtn">💰 현재가 새로고침</button>
+      <button class="modalBtn risk" id="modalRiskBtn">🎯 손절/익절 라인 계산</button>
       <button class="modalBtn cancel" id="modalCancelBtn">닫기</button>
     </div>
   </div>
@@ -451,6 +495,7 @@ const modalDetail = document.getElementById('modalDetail');
 const modalCodeBadge = document.getElementById('modalCodeBadge');
 const periodRow = document.getElementById('periodRow');
 const modalPriceBtn = document.getElementById('modalPriceBtn');
+const modalRiskBtn = document.getElementById('modalRiskBtn');
 const modalCancelBtn = document.getElementById('modalCancelBtn');
 let currentModalCode = null;
 let currentModalName = null;
@@ -494,6 +539,7 @@ function openStockModal(item) {
   renderNewsLinks(item.name);
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '5'));
   modalPriceBtn.onclick = () => { currentModalView = 'quote'; showQuote(item.code); };
+  modalRiskBtn.onclick = () => { currentModalView = 'risk'; showRiskLevels(item.code); };
   modalOverlay.classList.add('open');
   chartFullPrices = []; chartWindowSize = 0; chartOffsetFromEnd = 0;
   showChart(item.code, '5');
@@ -522,9 +568,10 @@ function startChartAutoRefresh() {
     if (document.hidden) return; // 탭이 백그라운드면 갱신 스킵 (불필요한 API 호출 방지)
     if (currentModalView === 'quote') {
       showQuote(currentModalCode, true);
-    } else {
+    } else if (currentModalView === 'chart') {
       showChart(currentModalCode, currentModalPeriod, true);
     }
+    // 'risk'(손절/익절) 뷰는 일봉 기반이라 자동갱신 안 함
   }, CHART_REFRESH_MS);
 }
 
@@ -540,7 +587,7 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && currentModalCode && modalOverlay.classList.contains('open')) {
     if (currentModalView === 'quote') {
       showQuote(currentModalCode, true);
-    } else {
+    } else if (currentModalView === 'chart') {
       showChart(currentModalCode, currentModalPeriod, true);
     }
   }
@@ -582,6 +629,31 @@ function renderNewsLinks(name) {
     '<a class="newsLink" href="https://search.naver.com/search.naver?query=' + dartQ + '" target="_blank" rel="noopener">📋 DART 공시</a>';
 }
 
+function showRiskLevels(code, silent) {
+  if (!silent) modalDetail.innerHTML = '<div class="detailLoading">변동성(ATR) 계산 중...</div>';
+  fetch('/api/risk-levels?code=' + code)
+    .then(res => res.json())
+    .then(data => {
+      if (!data.ok) {
+        if (!silent) modalDetail.innerHTML = '<div class="detailError">계산 실패: ' + (data.error || '알 수 없는 오류') + '</div>';
+        return;
+      }
+      const riskPct = ((data.currentPrice - data.stopLoss) / data.currentPrice * 100).toFixed(2);
+      const rewardPct = ((data.takeProfit - data.currentPrice) / data.currentPrice * 100).toFixed(2);
+      modalDetail.innerHTML =
+        '<div class="riskGrid">' +
+        '<div>현재가<b>' + fmt(data.currentPrice) + '원</b></div>' +
+        '<div>14일 ATR<b>' + fmt(Math.round(data.atr)) + '원</b></div>' +
+        '<div class="stopLoss">손절 라인 (-' + riskPct + '%)<b>' + fmt(data.stopLoss) + '원</b></div>' +
+        '<div class="takeProfit">익절 라인 (+' + rewardPct + '%)<b>' + fmt(data.takeProfit) + '원</b></div>' +
+        '<div class="riskNote">⚠️ 최근 14일 일봉 변동성(ATR) × 1.5/2 배수로 계산한 참고값입니다. 실제 손절/익절은 본인 리스크 허용범위에 맞게 조정하세요. 매매 신호가 아닙니다.</div>' +
+        '</div>';
+    })
+    .catch(err => {
+      if (!silent) modalDetail.innerHTML = '<div class="detailError">요청 오류: ' + err.message + '</div>';
+    });
+}
+
 function showQuote(code, silent) {
   if (!silent) modalDetail.innerHTML = '<div class="detailLoading">불러오는 중...</div>';
   fetch('/api/quote?code=' + code)
@@ -591,8 +663,18 @@ function showQuote(code, silent) {
         if (!silent) modalDetail.innerHTML = '<div class="detailError">조회 실패: ' + (data.error || '알 수 없는 오류') + '</div>';
         return;
       }
-      const gapFromHigh = data.high ? (((data.price - data.high) / data.high) * 100).toFixed(2) : '0.00';
+      const gapFromHigh = data.high ? (((data.price - data.high) / data.high) * 100) : 0;
       const now = new Date().toLocaleTimeString('ko-KR');
+      const cntrStr = (byCodeMap[code] && byCodeMap[code].cntrStr) || 0;
+
+      const warnings = [];
+      if (gapFromHigh <= -3) warnings.push('고점 대비 ' + gapFromHigh.toFixed(2) + '% 밀림');
+      if (cntrStr > 0 && cntrStr < 95) warnings.push('체결강도 매도세 전환(' + cntrStr.toFixed(1) + ')');
+      if ((byCodeMap[code] && byCodeMap[code].selReq > byCodeMap[code].buyReq)) warnings.push('매도잔량 우위 전환');
+      const sellWarningHtml = warnings.length
+        ? '<div class="sellWarning">⚠️ 매도 고려 신호: ' + warnings.join(' · ') + '</div>'
+        : '<div class="sellOk">✅ 특별한 매도 경고 신호 없음</div>';
+
       modalDetail.innerHTML =
         '<div class="detailGrid">' +
         '<div>현재가<b>' + fmt(data.price) + '원</b></div>' +
@@ -602,7 +684,8 @@ function showQuote(code, silent) {
         '<div>저가<b>' + fmt(data.low) + '원</b></div>' +
         '<div>거래량<b>' + fmt(data.volume) + '</b></div>' +
         '</div>' +
-        '<div class="highGap">오늘 고점 대비 <b>' + gapFromHigh + '%</b></div>' +
+        '<div class="highGap">오늘 고점 대비 <b>' + gapFromHigh.toFixed(2) + '%</b></div>' +
+        sellWarningHtml +
         '<div class="chartRange"><span class="liveDot">●</span> 실시간 · ' + now + '</div>';
     })
     .catch(err => {
@@ -1027,7 +1110,7 @@ async function load() {
   [...data.streak5, ...data.streak3, ...data.risingTop5, ...data.latest].forEach(r => {
     byCodeMap[r.code] = {
       code: r.code, name: r.name, price: r.price, rate: r.change_rate,
-      buyReq: r.buy_req || 0, selReq: r.sel_req || 0,
+      buyReq: r.buy_req || 0, selReq: r.sel_req || 0, cntrStr: r.cntr_str || 0,
     };
   });
 
@@ -1038,6 +1121,86 @@ document.getElementById('reloadBtn').addEventListener('click', (e) => {
   e.target.classList.add('spinning');
   load().finally(() => setTimeout(() => e.target.classList.remove('spinning'), 600));
 });
+
+// ---------- 내 매매 기록 ----------
+function loadTradeLog() {
+  const statsBar = document.getElementById('tradeStatsBar');
+  const tbody = document.querySelector('#tradeLog tbody');
+  fetch('/api/trade-log')
+    .then(res => res.json())
+    .then(data => {
+      if (!data.ok) {
+        statsBar.textContent = '불러오기 실패: ' + (data.error || '알 수 없는 오류');
+        return;
+      }
+      const s = data.stats;
+      if (s.count === 0) {
+        statsBar.textContent = '기록 없음 — 매매 끝나면 기록해보세요';
+      } else {
+        statsBar.innerHTML =
+          '거래 <b>' + s.count + '건</b> · ' +
+          '승률 <b>' + s.winRate.toFixed(1) + '%</b> (' + s.wins + '승 ' + s.losses + '패) · ' +
+          '총손익 <b class="' + (s.totalPnl >= 0 ? 'pnlPositive' : 'pnlNegative') + '">' + (s.totalPnl >= 0 ? '+' : '') + fmt(s.totalPnl) + '원</b>';
+      }
+      tbody.innerHTML = data.trades.length
+        ? data.trades.map(t => {
+            const pnl = (t.sell_price - t.buy_price) * t.qty;
+            return '<tr>' +
+              '<td>' + t.name + '</td>' +
+              '<td>' + fmt(t.buy_price) + ' → ' + fmt(t.sell_price) + '</td>' +
+              '<td>' + fmt(t.qty) + '</td>' +
+              '<td class="' + (pnl >= 0 ? 'pnlPositive' : 'pnlNegative') + '">' + (pnl >= 0 ? '+' : '') + fmt(pnl) + '</td>' +
+              '<td><span class="tradeDelBtn" data-id="' + t.id + '">🗑️</span></td>' +
+            '</tr>';
+          }).join('')
+        : '<tr><td class="empty">기록이 없습니다</td></tr>';
+
+      tbody.querySelectorAll('.tradeDelBtn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (!confirm('이 기록을 삭제할까요?')) return;
+          fetch('/api/trade-log?id=' + btn.dataset.id, { method: 'DELETE' })
+            .then(res => res.json())
+            .then(() => loadTradeLog());
+        });
+      });
+    })
+    .catch(err => { statsBar.textContent = '요청 오류: ' + err.message; });
+}
+
+const tradeLogForm = document.getElementById('tradeLogForm');
+document.getElementById('tradeLogAddBtn').addEventListener('click', () => {
+  tradeLogForm.style.display = tradeLogForm.style.display === 'none' ? 'flex' : 'none';
+});
+document.getElementById('tradeLogCancelBtn').addEventListener('click', () => {
+  tradeLogForm.style.display = 'none';
+});
+document.getElementById('tradeLogSaveBtn').addEventListener('click', () => {
+  const name = document.getElementById('tlName').value.trim();
+  const code = document.getElementById('tlCode').value.trim() || '-';
+  const buyPrice = Number(document.getElementById('tlBuy').value);
+  const sellPrice = Number(document.getElementById('tlSell').value);
+  const qty = Number(document.getElementById('tlQty').value);
+  const note = document.getElementById('tlNote').value.trim();
+  if (!name || !buyPrice || !sellPrice || !qty) {
+    alert('종목명, 매수가, 매도가, 수량은 필수예요.');
+    return;
+  }
+  fetch('/api/trade-log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name, buyPrice, sellPrice, qty, note }),
+  })
+    .then(res => res.json())
+    .then(data => {
+      if (!data.ok) { alert('저장 실패: ' + (data.error || '알 수 없는 오류')); return; }
+      ['tlName', 'tlCode', 'tlBuy', 'tlSell', 'tlQty', 'tlNote'].forEach(id => { document.getElementById(id).value = ''; });
+      tradeLogForm.style.display = 'none';
+      loadTradeLog();
+    })
+    .catch(err => alert('요청 오류: ' + err.message));
+});
+
+loadTradeLog();
 
 document.getElementById('patternScanBtn').addEventListener('click', (e) => {
   const btn = e.target;
@@ -1352,6 +1515,39 @@ async function kiwoomChart(env, token, code, period) {
   return data;
 }
 
+// ---------- 손절/익절 라인 계산 (ATR 기반) ----------
+async function kiwoomDailyOHLC(env, token, code) {
+  const raw = await kiwoomChart(env, token, code, "D");
+  let rows = [];
+  for (const key of Object.keys(raw)) {
+    if (Array.isArray(raw[key])) { rows = raw[key]; break; }
+  }
+  return rows
+    .map((r) => ({
+      high: abs(r.high_pric),
+      low: abs(r.low_pric),
+      close: abs(r.cur_prc ?? r.close_pric),
+    }))
+    .filter((r) => r.high > 0 && r.low > 0)
+    .reverse(); // 과거 -> 최신
+}
+
+function computeATR(ohlc, period) {
+  if (ohlc.length < 2) return null;
+  const trs = [];
+  for (let i = 1; i < ohlc.length; i++) {
+    const cur = ohlc[i], prev = ohlc[i - 1];
+    const tr = Math.max(
+      cur.high - cur.low,
+      Math.abs(cur.high - prev.close),
+      Math.abs(cur.low - prev.close)
+    );
+    trs.push(tr);
+  }
+  const recent = trs.slice(-period);
+  return recent.reduce((s, v) => s + v, 0) / recent.length;
+}
+
 function parseKiwoomChart(json) {
   let rows = [];
   for (const key of Object.keys(json)) {
@@ -1580,6 +1776,86 @@ self.addEventListener('fetch', (e) => {
           const token = await kiwoomIssueToken(env);
           const raw = await kiwoomQuote(env, token, code);
           return Response.json({ ok: true, ...parseKiwoomQuote(raw) });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/trade-log" && request.method === "GET") {
+        try {
+          const res = await env.DB.prepare(
+            `SELECT * FROM trade_log ORDER BY created_at DESC LIMIT 200`
+          ).all();
+          const trades = res.results;
+          const stats = trades.reduce(
+            (acc, t) => {
+              const pnl = (t.sell_price - t.buy_price) * t.qty;
+              acc.totalPnl += pnl;
+              acc.count += 1;
+              if (pnl > 0) acc.wins += 1;
+              else if (pnl < 0) acc.losses += 1;
+              return acc;
+            },
+            { totalPnl: 0, count: 0, wins: 0, losses: 0 }
+          );
+          stats.winRate = stats.count > 0 ? (stats.wins / stats.count) * 100 : 0;
+          return Response.json({ ok: true, trades, stats });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/trade-log" && request.method === "POST") {
+        try {
+          const body = await request.json();
+          const { code, name, buyPrice, sellPrice, qty, note } = body;
+          if (!code || !name || !buyPrice || !sellPrice || !qty) {
+            return Response.json({ ok: false, error: "필수 항목 누락 (code, name, buyPrice, sellPrice, qty)" }, { status: 400 });
+          }
+          await env.DB.prepare(
+            `INSERT INTO trade_log (code, name, buy_price, sell_price, qty, note, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          )
+            .bind(code, name, buyPrice, sellPrice, qty, note || "", new Date().toISOString())
+            .run();
+          return Response.json({ ok: true });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/trade-log" && request.method === "DELETE") {
+        try {
+          const id = url.searchParams.get("id");
+          if (!id) return Response.json({ ok: false, error: "id 누락" }, { status: 400 });
+          await env.DB.prepare(`DELETE FROM trade_log WHERE id = ?`).bind(id).run();
+          return Response.json({ ok: true });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/risk-levels") {
+        try {
+          const code = url.searchParams.get("code");
+          if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
+          const token = await kiwoomIssueToken(env);
+          const [ohlc, quoteRaw] = await Promise.all([
+            kiwoomDailyOHLC(env, token, code),
+            kiwoomQuote(env, token, code),
+          ]);
+          const atr = computeATR(ohlc, 14);
+          const quote = parseKiwoomQuote(quoteRaw);
+          if (!atr) {
+            return Response.json({ ok: false, error: "ATR 계산에 필요한 일봉 데이터가 부족합니다" });
+          }
+          return Response.json({
+            ok: true,
+            atr,
+            currentPrice: quote.price,
+            stopLoss: Math.round(quote.price - atr * 1.5),
+            takeProfit: Math.round(quote.price + atr * 2),
+          });
         } catch (e) {
           return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
         }
