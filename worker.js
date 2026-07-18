@@ -553,7 +553,8 @@ function openStockModal(item) {
   modalOverlay.classList.add('open');
   setHeavyButtonsDisabled(true);
   chartFullPrices = []; chartWindowSize = 0; chartOffsetFromEnd = 0;
-  showChart(item.code, '1');
+connectPriceStream(item.code);
+showChart(item.code, '1');
   startChartAutoRefresh();
 }
 
@@ -612,7 +613,8 @@ document.addEventListener('visibilitychange', () => {
 });
 
 function closeStockModal() {
-  modalOverlay.classList.remove('open');
+disconnectPriceStream();
+modalOverlay.classList.remove('open');
   stopChartAutoRefresh();
   setHeavyButtonsDisabled(false);
 }
@@ -672,11 +674,60 @@ function showRiskLevels(code, silent) {
     });
 }
 
+let priceSocket = null;
+let priceSocketCode = null;
+
+function connectPriceStream(code) {
+disconnectPriceStream();
+priceSocketCode = code;
+try {
+const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+priceSocket = new WebSocket(proto + '://' + location.host + '/ws/price?code=' + code);
+priceSocket.onmessage = (evt) => {
+let msg;
+try { msg = JSON.parse(evt.data); } catch (e) { return; }
+if (msg.type === 'tick') {
+console.log('[실시간 체결]', code, msg);
+renderLiveTickBadge(msg);
+} else if (msg.type === 'error') {
+console.warn('[실시간 시세 오류]', msg.message);
+}
+};
+priceSocket.onerror = () => { disconnectPriceStream(); };
+priceSocket.onclose = () => { priceSocket = null; };
+} catch (e) {
+priceSocket = null;
+}
+}
+
+function disconnectPriceStream() {
+if (priceSocket) {
+try { priceSocket.close(); } catch (e) {}
+priceSocket = null;
+}
+priceSocketCode = null;
+const badge = document.getElementById('liveTickBadge');
+if (badge) badge.remove();
+}
+
+function renderLiveTickBadge(msg) {
+if (currentModalCode !== msg.code) return;
+let badge = document.getElementById('liveTickBadge');
+if (!badge) {
+badge = document.createElement('div');
+badge.id = 'liveTickBadge';
+badge.style.cssText = 'font-size:11px;color:#69db7c;margin-top:4px;';
+modalDetail.parentElement.insertBefore(badge, modalDetail);
+}
+const t = new Date(msg.ts).toLocaleTimeString('ko-KR');
+badge.textContent = '⚡ 실시간 체결 수신 ' + t + ' (콘솔에서 raw 데이터 확인 가능)';
+}
+
 function showQuote(code, silent) {
   if (!silent) modalDetail.innerHTML = '<div class="detailLoading">불러오는 중...</div>';
   fetch('/api/quote?code=' + code)
     .then(res => res.json())
-    .then(data => {
+        .then(data => {
       if (!data.ok) {
         if (!silent) modalDetail.innerHTML = '<div class="detailError">조회 실패: ' + (data.error || '알 수 없는 오류') + '</div>';
         return;
@@ -1395,6 +1446,201 @@ function kiwoomHost(env) {
     : "https://mockapi.kiwoom.com"; // 기본값: 모의투자
 }
 
+// ============================================================
+// 실시간 시세 스트리밍 (Durable Object + 키움 WebSocket 릴레이)
+// ============================================================
+// 미검증 구간: REG 메시지의 grp_no/refresh 필드, 체결 데이터의 FID 번호는
+// 공개 예제 기준으로 작성했습니다. 실전 배포 전 브라우저 콘솔에 찍히는
+// raw 데이터를 보고 FID_MAP을 맞춰야 정확한 값이 표시됩니다.
+const FID_MAP = {
+    price: "10",
+    rate: "12",
+    volume: "15",
+};
+
+export class PriceStreamDO {
+    constructor(state, env) {
+          this.state = state;
+          this.env = env;
+          this.code = null;
+          this.clients = new Set();
+          this.kiwoomWs = null;
+          this.kiwoomLoggedIn = false;
+          this.connecting = false;
+          this.reconnectAttempt = 0;
+          this.pingTimer = null;
+    }
+  
+  async fetch(request) {
+    const url = new URL(request.url);
+    const code = url.searchParams.get("code");
+    if (!code) return new Response("code missing", { status: 400 });
+    this.code = code;
+    
+    if (request.headers.get("Upgrade") !== "websocket") {
+      return new Response("not a websocket upgrade", { status: 426 });
+    }
+    
+    const pair = new WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
+    server.accept();
+    this.clients.add(server);
+    
+    server.addEventListener("close", () => {
+      this.clients.delete(server);
+      if (this.clients.size === 0) this.teardownKiwoomWs();
+    });
+    server.addEventListener("error", () => {
+      this.clients.delete(server);
+    });
+    
+    this.ensureKiwoomWs().catch((e) => {
+      this.broadcast({ type: "error", message: String(e.message || e) });
+    });
+    
+    return new Response(null, { status: 101, webSocket: client });
+  }
+  
+  async ensureKiwoomWs() {
+    if (this.kiwoomWs || this.connecting) return;
+    this.connecting = true;
+    try {
+      const host = this.env.KIWOOM_MOCK === "false" ? "api.kiwoom.com" : "mockapi.kiwoom.com";
+      const wsUrl = "wss://" + host + ":10000/api/dostk/websocket";
+      
+      const resp = await fetch(wsUrl, { headers: { Upgrade: "websocket" } });
+      const ws = resp.webSocket;
+      if (!ws) throw new Error("kiwoom ws upgrade failed");
+      ws.accept();
+      this.kiwoomWs = ws;
+      this.kiwoomLoggedIn = false;
+      
+      const token = await kiwoomIssueToken(this.env);
+      
+      ws.addEventListener("message", (evt) => this.onKiwoomMessage(evt));
+      ws.addEventListener("close", () => this.onKiwoomClose());
+      ws.addEventListener("error", () => this.onKiwoomClose());
+      
+      ws.send(JSON.stringify({ trnm: "LOGIN", token }));
+    } finally {
+      this.connecting = false;
+    }
+  }
+  
+  onKiwoomMessage(evt) {
+    let msg;
+    try {
+      msg = JSON.parse(evt.data);
+    } catch (e) {
+      return;
+    }
+    
+    if (msg.trnm === "PING") {
+      this.kiwoomWs.send(JSON.stringify({ trnm: "PONG" }));
+      return;
+    }
+    
+    if (msg.trnm === "LOGIN") {
+      const ok = msg.return_code === 0 || msg.return_code === "0";
+      if (ok) {
+        this.kiwoomLoggedIn = true;
+        this.reconnectAttempt = 0;
+        this.startPing();
+        this.kiwoomWs.send(JSON.stringify({
+          trnm: "REG",
+          grp_no: "1",
+          refresh: "1",
+          data: [{ item: [this.code], type: ["0B"] }],
+        }));
+        this.broadcast({ type: "status", status: "connected" });
+      } else {
+        this.broadcast({ type: "error", message: "kiwoom ws login failed: " + JSON.stringify(msg) });
+        this.teardownKiwoomWs();
+        this.scheduleReconnect();
+      }
+      return;
+    }
+    
+    if (msg.trnm === "REAL" && Array.isArray(msg.data)) {
+      for (const item of msg.data) {
+        if (item.type !== "0B") continue;
+        const v = item.values || {};
+        this.broadcast({
+          type: "tick",
+          code: this.code,
+          price: Math.abs(parseInt(String(v[FID_MAP.price] || "0").replace(/[^0-9-]/g, ""), 10)) || 0,
+          rate: parseFloat(v[FID_MAP.rate] || "0") || 0,
+          volume: Math.abs(parseInt(String(v[FID_MAP.volume] || "0").replace(/[^0-9-]/g, ""), 10)) || 0,
+          raw: v,
+          ts: Date.now(),
+        });
+      }
+      return;
+    }
+    
+    this.broadcast({ type: "debug", raw: msg });
+  }
+  
+  onKiwoomClose() {
+    this.kiwoomWs = null;
+    this.kiwoomLoggedIn = false;
+    this.stopPing();
+    if (this.clients.size > 0) {
+      this.broadcast({ type: "status", status: "disconnected" });
+      this.scheduleReconnect();
+    }
+  }
+  
+  scheduleReconnect() {
+    this.reconnectAttempt = Math.min(this.reconnectAttempt + 1, 5);
+    const delay = 2000 * this.reconnectAttempt;
+    setTimeout(() => {
+      if (this.clients.size > 0) this.ensureKiwoomWs().catch(() => {});
+    }, delay);
+  }
+  
+  startPing() {
+    this.stopPing();
+    this.pingTimer = setInterval(() => {
+      if (this.kiwoomWs && this.kiwoomLoggedIn) {
+        try {
+          this.kiwoomWs.send(JSON.stringify({ trnm: "PING" }));
+        } catch (e) {}
+      }
+    }, 30000);
+  }
+  
+  stopPing() {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+  
+  teardownKiwoomWs() {
+    this.stopPing();
+    if (this.kiwoomWs) {
+      try {
+        this.kiwoomWs.close();
+      } catch (e) {}
+      this.kiwoomWs = null;
+    }
+    this.kiwoomLoggedIn = false;
+  }
+  
+  broadcast(payload) {
+    const msg = JSON.stringify(payload);
+    for (const client of this.clients) {
+      try {
+        client.send(msg);
+      } catch (e) {
+        this.clients.delete(client);
+      }
+    }
+  }
+}
+
 // 토큰 캐시 (Worker 인스턴스가 살아있는 동안 재사용 -> 5초 자동갱신 차트가 매번 토큰을 새로 받지 않게 함)
 let cachedToken = null;
 let cachedTokenExpiryMs = 0;
@@ -1816,6 +2062,14 @@ self.addEventListener('fetch', (e) => {
         }
       }
 
+      if (url.pathname === "/ws/price") {
+        const code = url.searchParams.get("code");
+        if (!code) return new Response("code missing", { status: 400 });
+        const id = env.PRICE_STREAM.idFromName(code);
+      const stub = env.PRICE_STREAM.get(id);
+        return stub.fetch(request);
+      }
+      
       if (url.pathname === "/api/quote") {
         try {
           const code = url.searchParams.get("code");
