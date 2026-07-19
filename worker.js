@@ -568,7 +568,6 @@ function openStockModal(item) {
   chartFullPrices = []; chartWindowSize = 0; chartOffsetFromEnd = 0;
   showChart(item.code, '1');
   startChartAutoRefresh();
-  connectPriceSocket(item.code);
 }
 
 function setHeavyButtonsDisabled(disabled) {
@@ -578,62 +577,10 @@ function setHeavyButtonsDisabled(disabled) {
   if (collectBtn) collectBtn.disabled = disabled;
 }
 
-// ---------- 실시간 WebSocket (되면 보너스, 안 되면 기존 3초 폴링이 계속 동작) ----------
-let priceSocket = null;
-let priceSocketReady = false;
-
-function connectPriceSocket(code) {
-  disconnectPriceSocket();
-  try {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    priceSocket = new WebSocket(proto + '//' + location.host + '/ws');
-    priceSocket.addEventListener('open', () => {
-      priceSocketReady = true;
-      console.log('[realtime] ws open, subscribing', code);
-      priceSocket.send(JSON.stringify({ type: 'subscribe', code }));
-    });
-    priceSocket.addEventListener('message', (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        console.log('[realtime] message', msg);
-        if (msg.type === 'error') {
-          const badge = document.getElementById('modalCodeBadge');
-          if (badge) badge.textContent = '⚠️ 실시간 연결 실패: ' + msg.error;
-          return;
-        }
-        if (msg.type === 'price' && msg.code === currentModalCode && msg.price) {
-          modalPrice.textContent = fmt(msg.price) + '원';
-          if (msg.rate) modalRate.textContent = (msg.rate >= 0 ? '+' : '') + msg.rate.toFixed(2) + '%';
-          const liveDot = modalDetail.querySelector('.liveDot');
-          if (liveDot) liveDot.style.color = '#ffd43b'; // 실시간 수신 중 표시
-        }
-      } catch (err) {
-        console.log('[realtime] parse error', err, e.data);
-      }
-    });
-    priceSocket.addEventListener('close', (e) => {
-      console.log('[realtime] ws closed', e.code, e.reason);
-      priceSocketReady = false;
-      priceSocket = null;
-    });
-    priceSocket.addEventListener('error', (e) => {
-      console.log('[realtime] ws error', e);
-      priceSocketReady = false;
-    });
-  } catch (err) {
-    console.log('[realtime] connect exception', err);
-    priceSocket = null;
-  }
-}
-
-function disconnectPriceSocket() {
-  if (priceSocket) {
-    try { priceSocket.close(); } catch (_) {}
-  }
-  priceSocket = null;
-  priceSocketReady = false;
-}
-
+// ---------- 실시간 WebSocket 관련 코드는 제거됨 ----------
+// Cloudflare Workers의 fetch()/WebSocket 아웃바운드 연결이 비표준 포트(10000)를
+// 프로덕션에서 지원하지 않아(80/443만 허용) 구현이 불가능하다고 확인됨.
+// 3초 폴링(startChartAutoRefresh)만으로 갱신함.
 periodRow.addEventListener('click', (e) => {
   const btn = e.target.closest('.periodBtn');
   if (!btn || !currentModalCode) return;
@@ -684,7 +631,6 @@ document.addEventListener('visibilitychange', () => {
 function closeStockModal() {
   modalOverlay.classList.remove('open');
   stopChartAutoRefresh();
-  disconnectPriceSocket();
   setHeavyButtonsDisabled(false);
 }
 
@@ -1956,142 +1902,11 @@ async function debugFetch(env) {
 }
 
 // ---------- 엔트리포인트 ----------
-// ---------- 실시간 WebSocket 릴레이 (Durable Object) ----------
-// 브라우저 클라이언트 <-> 이 DO <-> 키움 실시간 WebSocket
-// 실패해도 프론트엔드는 기존 3초 폴링으로 계속 동작하도록 설계됨 (보너스 레이어)
-export class PriceStreamDO {
-  constructor(state, env) {
-    this.state = state;
-    this.env = env;
-    this.kiwoomWs = null;
-    this.kiwoomLoggedIn = false;
-    this.clients = new Set();
-    this.subscribedCodes = new Set();
-  }
-
-  async fetch(request) {
-    if (request.headers.get("Upgrade") !== "websocket") {
-      return new Response("PriceStreamDO: WebSocket upgrade 필요", { status: 400 });
-    }
-
-    const pair = new WebSocketPair();
-    const [client, server] = Object.values(pair);
-    server.accept();
-    this.clients.add(server);
-
-    server.addEventListener("message", (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === "subscribe" && msg.code) {
-          this.subscribeCode(msg.code);
-        }
-      } catch (err) {
-        // 무시
-      }
-    });
-    server.addEventListener("close", () => this.clients.delete(server));
-    server.addEventListener("error", () => this.clients.delete(server));
-
-    try {
-      await this.ensureKiwoomConnection();
-    } catch (err) {
-      try {
-        server.send(JSON.stringify({ type: "error", error: String(err.message || err) }));
-      } catch (_) {}
-    }
-
-    return new Response(null, { status: 101, webSocket: client });
-  }
-
-  async ensureKiwoomConnection() {
-    if (this.kiwoomWs) return;
-
-    const token = await kiwoomIssueToken(this.env);
-    const host = this.env.KIWOOM_MOCK === "false" ? "wss://api.kiwoom.com:10000" : "wss://mockapi.kiwoom.com:10000";
-    const resp = await fetch(host + "/api/dostk/websocket", { headers: { Upgrade: "websocket" } });
-    const ws = resp.webSocket;
-    if (!ws) throw new Error("키움 실시간 WebSocket 연결 실패");
-    ws.accept();
-    this.kiwoomWs = ws;
-    this.kiwoomLoggedIn = false;
-
-    ws.addEventListener("message", (event) => this.handleKiwoomMessage(event));
-    ws.addEventListener("close", () => { this.kiwoomWs = null; this.kiwoomLoggedIn = false; });
-    ws.addEventListener("error", () => { this.kiwoomWs = null; this.kiwoomLoggedIn = false; });
-
-    ws.send(JSON.stringify({ trnm: "LOGIN", token }));
-  }
-
-  handleKiwoomMessage(event) {
-    let msg;
-    try {
-      msg = JSON.parse(event.data);
-    } catch (err) {
-      return;
-    }
-
-    if (msg.trnm === "PING") {
-      // 연결 유지: 받은 그대로 에코
-      try { this.kiwoomWs.send(event.data); } catch (_) {}
-      return;
-    }
-
-    if (msg.trnm === "LOGIN") {
-      this.kiwoomLoggedIn = msg.return_code === 0 || msg.return_code === "0";
-      if (this.kiwoomLoggedIn && this.subscribedCodes.size > 0) {
-        this.sendSubscription([...this.subscribedCodes]);
-      }
-      return;
-    }
-
-    if (msg.trnm === "REAL" && Array.isArray(msg.data)) {
-      for (const item of msg.data) {
-        const code = item.item;
-        const values = item.values || {};
-        const price = Math.abs(parseInt(String(values["10"] ?? "0").replace(/[^\d-]/g, ""), 10)) || 0;
-        const rate = parseFloat(values["12"] ?? "0") || 0; // FID 12: 등락율 추정
-        if (!price) continue;
-        const payload = JSON.stringify({ type: "price", code, price, rate, time: values["20"] || "" });
-        for (const client of this.clients) {
-          try { client.send(payload); } catch (_) {}
-        }
-      }
-    }
-  }
-
-  subscribeCode(code) {
-    if (this.subscribedCodes.has(code)) return;
-    this.subscribedCodes.add(code);
-    if (this.kiwoomLoggedIn) this.sendSubscription([code]);
-  }
-
-  sendSubscription(codes) {
-    if (!this.kiwoomWs) return;
-    try {
-      this.kiwoomWs.send(JSON.stringify({
-        trnm: "REG",
-        grp_no: "1",
-        refresh: "1",
-        data: [{ item: codes, type: ["0B"] }], // 0B: 주식체결
-      }));
-    } catch (_) {}
-  }
-}
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
     try {
-      if (url.pathname === "/ws") {
-        if (!env.PRICE_STREAM) {
-          return new Response("PRICE_STREAM 바인딩 없음", { status: 500 });
-        }
-        const id = env.PRICE_STREAM.idFromName("global");
-        const stub = env.PRICE_STREAM.get(id);
-        return stub.fetch(request);
-      }
-
       if (url.pathname === "/manifest.json") {
         return Response.json({
           name: "급등주 스크리너",
