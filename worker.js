@@ -1661,7 +1661,7 @@ async function askStockExpert(env, promptText) {
     "확실하지 않으면 그렇다고 밝히세요. 한국어로, 4~6문장 정도로 간결하게 답하세요.";
 
   // Cloudflare Workers AI 무료 티어 (하루 1만 뉴런) - Llama 3.1 8B
-  const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+  const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fast", {
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: promptText },
