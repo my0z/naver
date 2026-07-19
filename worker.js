@@ -285,6 +285,8 @@ function renderDashboard() {
   .modalPriceInline { font-size:15px; color:#eee; font-weight:600; }
   .starBtn { font-size:20px; cursor:pointer; color:#666; }
   .starBtn.active { color:#ffd43b; }
+  .topPickStar { font-size:16px; cursor:pointer; color:#666; }
+  .topPickStar.active { color:#ffd43b; }
   .modalHeadRow .up { color:#ff6b6b; font-size:14px; }
   #modalDetail:empty { display:none; }
   #modalOrderBook { margin-bottom:12px; }
@@ -428,7 +430,7 @@ function renderDashboard() {
   <div class="board topPicksBoard">
     <h2>🏆 오늘의 TOP 10</h2>
     <table id="topPicks">
-      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>점수</th></tr></thead>
+      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>점수</th><th></th></tr></thead>
       <tbody><tr><td class="empty">데이터 없음</td></tr></tbody>
     </table>
   </div>
@@ -1271,6 +1273,8 @@ async function load() {
     fmt(r.price),
     '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
     '🔥'.repeat(Math.max(1, Math.min(5, Math.round(r.topScore / 10)))),
+    '<span class="topPickStar ' + (watchlistCodes.has(r.code) ? 'active' : '') + '" data-code="' + r.code + '" data-name="' + r.name + '">' +
+      (watchlistCodes.has(r.code) ? '★' : '☆') + '</span>',
   ], '데이터 없음', item => copyCodeAndLaunchApp(item.code, item.name));
 
   // 클릭용 종목 정보 매핑 (streak5 + streak3 + top5 + all 합쳐서)
@@ -1388,6 +1392,24 @@ function updateStarButton(code, name) {
 }
 
 loadWatchlist();
+
+// TOP10 표 안 별표 클릭 (행 전체 클릭인 코드복사+앱실행과 분리)
+document.querySelector('#topPicks tbody').addEventListener('click', (e) => {
+  const star = e.target.closest('.topPickStar');
+  if (!star) return;
+  e.stopPropagation();
+  const code = star.dataset.code, name = star.dataset.name;
+  if (watchlistCodes.has(code)) {
+    fetch('/api/watchlist?code=' + code, { method: 'DELETE' })
+      .then(() => { watchlistCodes.delete(code); loadWatchlist(); load(); });
+  } else {
+    fetch('/api/watchlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, name }),
+    }).then(() => { watchlistCodes.add(code); loadWatchlist(); load(); });
+  }
+});
 
 function loadTradeLog() {
   const statsBar = document.getElementById('tradeStatsBar');
