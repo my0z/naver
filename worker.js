@@ -351,6 +351,11 @@ function renderDashboard() {
   .modalBtn.price { background:#2a2a2a; color:#eee; }
   .modalBtn.risk { background:#2a2a2a; color:#ffa94d; }
   .modalBtn.ai { background:#2a2a2a; color:#a78bfa; }
+  .actionRow { display:flex; gap:8px; margin-bottom:10px; }
+  .actionRow .modalBtn {
+    flex:1; width:auto; margin-bottom:0; padding:10px 4px;
+    font-size:12px; white-space:nowrap;
+  }
   .aiAnalysisCard {
     background:#17141f; border:1px solid #4c3a80; border-radius:10px;
     padding:12px; font-size:13px; line-height:1.6; color:#ddd; margin-bottom:12px;
@@ -504,9 +509,11 @@ function renderDashboard() {
         <button class="periodBtn" data-period="W">주봉</button>
         <button class="periodBtn" data-period="M">월봉</button>
       </div>
-      <button class="modalBtn price" id="modalPriceBtn">💰 현재가 새로고침</button>
-      <button class="modalBtn risk" id="modalRiskBtn">🎯 손절/익절 라인 계산</button>
-      <button class="modalBtn ai" id="modalAiBtn">🤖 AI 분석</button>
+      <div class="actionRow">
+        <button class="modalBtn price" id="modalPriceBtn">💰 현재가</button>
+        <button class="modalBtn risk" id="modalRiskBtn">🎯 손절/익절</button>
+        <button class="modalBtn ai" id="modalAiBtn">🤖 AI 분석</button>
+      </div>
       <button class="modalBtn cancel" id="modalCancelBtn">닫기</button>
     </div>
   </div>
