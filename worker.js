@@ -362,6 +362,7 @@ function renderDashboard() {
   .tradeDelBtn { color:#666; cursor:pointer; font-size:14px; }
   .pnlPositive { color:#ff6b6b; }
   .pnlNegative { color:#4d9fff; }
+  .addedDate { font-size:10px; color:#666; font-weight:normal; }
   .modalBtn {
     display:block; width:100%; box-sizing:border-box; text-align:center;
     padding:14px; margin-bottom:10px; border-radius:10px; border:none;
@@ -1326,6 +1327,14 @@ function computeRealisticPnl(entryPrice, currentPrice, budget) {
   return { qty, investedAmount, netPnlAmount, netPnlPct };
 }
 
+function formatAddedDate(isoString) {
+  const d = new Date(isoString);
+  const kst = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  const mm = String(kst.getMonth() + 1).padStart(2, '0');
+  const dd = String(kst.getDate()).padStart(2, '0');
+  return mm + '/' + dd + ' 추가';
+}
+
 function loadWatchlist() {
   fetch('/api/watchlist')
     .then(res => res.json())
@@ -1344,11 +1353,11 @@ function loadWatchlist() {
         return {
           code: w.code, name: w.name,
           price: currentPrice, rate: live ? live.rate : null, volume: live ? live.volume : null,
-          entryPrice, pnl,
+          entryPrice, pnl, addedAt: w.added_at,
         };
       });
       patchTable(tbody, rows, r => [
-        r.name,
+        r.name + (r.addedAt ? '<div class="addedDate">' + formatAddedDate(r.addedAt) + '</div>' : ''),
         r.price !== null ? fmt(r.price) : '-',
         r.rate !== null ? '<span class="up">+' + r.rate.toFixed(2) + '%</span>' : '<span class="empty">밴드 밖</span>',
         r.entryPrice ? fmt(r.entryPrice) + '원' : '-',
