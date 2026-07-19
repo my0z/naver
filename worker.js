@@ -350,6 +350,13 @@ function renderDashboard() {
   }
   .modalBtn.price { background:#2a2a2a; color:#eee; }
   .modalBtn.risk { background:#2a2a2a; color:#ffa94d; }
+  .modalBtn.ai { background:#2a2a2a; color:#a78bfa; }
+  .aiAnalysisCard {
+    background:#17141f; border:1px solid #4c3a80; border-radius:10px;
+    padding:12px; font-size:13px; line-height:1.6; color:#ddd; margin-bottom:12px;
+    white-space:pre-wrap;
+  }
+  .aiAnalysisNote { font-size:10px; color:#666; margin-top:6px; }
   .riskGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; background:#151515; border-radius:10px; padding:10px 12px; font-size:12px; color:#999; margin-bottom:12px; }
   .riskGrid b { display:block; font-size:15px; margin-top:2px; }
   .riskGrid .stopLoss b { color:#4d9fff; }
@@ -499,6 +506,7 @@ function renderDashboard() {
       </div>
       <button class="modalBtn price" id="modalPriceBtn">💰 현재가 새로고침</button>
       <button class="modalBtn risk" id="modalRiskBtn">🎯 손절/익절 라인 계산</button>
+      <button class="modalBtn ai" id="modalAiBtn">🤖 AI 분석</button>
       <button class="modalBtn cancel" id="modalCancelBtn">닫기</button>
     </div>
   </div>
@@ -516,6 +524,7 @@ const modalCodeBadge = document.getElementById('modalCodeBadge');
 const periodRow = document.getElementById('periodRow');
 const modalPriceBtn = document.getElementById('modalPriceBtn');
 const modalRiskBtn = document.getElementById('modalRiskBtn');
+const modalAiBtn = document.getElementById('modalAiBtn');
 const modalCancelBtn = document.getElementById('modalCancelBtn');
 let currentModalCode = null;
 let currentModalName = null;
@@ -560,6 +569,7 @@ function openStockModal(item) {
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '1'));
   modalPriceBtn.onclick = () => { currentModalView = 'quote'; showQuote(item.code); };
   modalRiskBtn.onclick = () => { currentModalView = 'risk'; showRiskLevels(item.code); };
+  modalAiBtn.onclick = () => { currentModalView = 'ai'; showAiAnalysis(item); };
   modalOverlay.classList.add('open');
   setHeavyButtonsDisabled(true);
   chartFullPrices = []; chartWindowSize = 0; chartOffsetFromEnd = 0;
@@ -693,6 +703,32 @@ function renderNewsLinks(name, code) {
       ).join('');
     })
     .catch(() => {});
+}
+
+function showAiAnalysis(item) {
+  modalDetail.innerHTML = '<div class="detailLoading">🤖 AI가 뉴스·공시·시세 종합 분석 중... (몇 초 소요)</div>';
+  fetch('/api/ai-analysis', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code: item.code, name: item.name,
+      cntrStr: item.cntrStr, buyReq: item.buyReq, selReq: item.selReq,
+      signalChecks: item.signalChecks,
+    }),
+  })
+    .then(res => res.json())
+    .then(data => {
+      if (!data.ok) {
+        modalDetail.innerHTML = '<div class="detailError">분석 실패: ' + (data.error || '알 수 없는 오류') + '</div>';
+        return;
+      }
+      modalDetail.innerHTML =
+        '<div class="aiAnalysisCard">' + data.analysis + '</div>' +
+        '<div class="aiAnalysisNote">⚠️ AI가 생성한 참고용 요약이며, 매매 추천이 아닙니다. 데이터 누락·오류 가능성 있음.</div>';
+    })
+    .catch(err => {
+      modalDetail.innerHTML = '<div class="detailError">요청 오류: ' + err.message + '</div>';
+    });
 }
 
 function showRiskLevels(code, silent) {
@@ -1197,6 +1233,7 @@ async function load() {
     byCodeMap[r.code] = {
       code: r.code, name: r.name, price: r.price, rate: r.change_rate,
       buyReq: r.buy_req || 0, selReq: r.sel_req || 0, cntrStr: r.cntr_str || 0,
+      signalChecks: r.signalChecks || [],
     };
   });
 
@@ -1608,6 +1645,39 @@ async function fetchDartDisclosures(env, corpCode) {
     date: item.rcept_dt,
     link: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${item.rcept_no}`,
   }));
+}
+
+// ---------- 주식 분석 에이전트 (Claude API) ----------
+async function askStockExpert(env, promptText) {
+  if (!env.ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY 시크릿이 설정되지 않았습니다.");
+  }
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1000,
+      system:
+        "당신은 한국 주식시장 데이터를 요약/설명하는 보조 도구입니다. " +
+        "제공된 데이터(가격, 등락률, 체결강도, 호가잔량, 뉴스, 공시)를 바탕으로 " +
+        "지금 상황에 대한 객관적인 관찰과 주의할 점을 정리하세요. " +
+        "'사세요', '파세요', '지금이 매수 타이밍입니다' 같은 직접적인 매매 추천이나 " +
+        "확정적인 가격 전망은 절대 하지 마세요. 데이터에 없는 내용은 추측하지 말고, " +
+        "확실하지 않으면 그렇다고 밝히세요. 한국어로, 4~6문장 정도로 간결하게 답하세요.",
+      messages: [{ role: "user", content: promptText }],
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Claude API 실패: ${JSON.stringify(data)}`);
+  }
+  const textBlock = (data.content || []).find((b) => b.type === "text");
+  return textBlock ? textBlock.text : "(응답 없음)";
 }
 
 async function naverNewsSearch(env, query) {
@@ -2084,6 +2154,53 @@ self.addEventListener('fetch', (e) => {
           if (!id) return Response.json({ ok: false, error: "id 누락" }, { status: 400 });
           await env.DB.prepare(`DELETE FROM trade_log WHERE id = ?`).bind(id).run();
           return Response.json({ ok: true });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/ai-analysis" && request.method === "POST") {
+        try {
+          const body = await request.json();
+          const { code, name } = body;
+          if (!code || !name) {
+            return Response.json({ ok: false, error: "code, name 필요" }, { status: 400 });
+          }
+
+          const token = await kiwoomIssueToken(env);
+          const [quoteRaw, newsItems, corp] = await Promise.all([
+            kiwoomQuote(env, token, code).catch(() => null),
+            naverNewsSearch(env, name).catch(() => []),
+            getDartCorpCode(env, code).catch(() => null),
+          ]);
+          const quote = quoteRaw ? parseKiwoomQuote(quoteRaw) : null;
+          let disclosures = [];
+          if (corp) {
+            disclosures = await fetchDartDisclosures(env, corp.corp_code).catch(() => []);
+          }
+
+          const lines = [`종목: ${name} (${code})`];
+          if (quote) {
+            lines.push(`현재가: ${quote.price}원, 등락률: ${quote.rate}%`);
+            lines.push(`오늘 시가: ${quote.open}, 고가: ${quote.high}, 저가: ${quote.low}, 거래량: ${quote.volume}`);
+          }
+          if (body.cntrStr) lines.push(`체결강도: ${body.cntrStr}`);
+          if (body.buyReq && body.selReq) lines.push(`매수잔량: ${body.buyReq}, 매도잔량: ${body.selReq}`);
+          if (body.signalChecks && body.signalChecks.length) {
+            lines.push(`충족된 기술적 조건: ${body.signalChecks.join(", ")}`);
+          }
+          if (newsItems.length) {
+            lines.push("최근 뉴스:");
+            newsItems.forEach((n) => lines.push(`- ${n.title}: ${n.description}`));
+          }
+          if (disclosures.length) {
+            lines.push("최근 30일 공시:");
+            disclosures.forEach((d) => lines.push(`- ${d.date} ${d.title}`));
+          }
+          lines.push("위 데이터를 바탕으로 지금 상황을 요약하고, 눈여겨볼 만한 리스크나 특이사항이 있으면 짚어주세요.");
+
+          const analysis = await askStockExpert(env, lines.join("\n"));
+          return Response.json({ ok: true, analysis });
         } catch (e) {
           return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
         }
