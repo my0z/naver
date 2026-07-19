@@ -1644,18 +1644,21 @@ async function fetchDartDisclosures(env, corpCode) {
   const start = startDate.toISOString().slice(0, 10).replace(/-/g, "");
   const url =
     `https://opendart.fss.or.kr/api/list.json?crtfc_key=${env.DART_API_KEY}` +
-    `&corp_code=${corpCode}&bgn_de=${start}&end_de=${end}&page_count=5`;
+    `&corp_code=${corpCode}&bgn_de=${start}&end_de=${end}&page_count=5` +
+    `&sort=date&sort_mth=desc`; // 접수일자 기준 최신순
   const res = await fetch(url);
   const data = await res.json();
   if (data.status !== "000" && data.status !== "013") {
     // 013 = 조회된 데이터 없음 (정상 케이스)
     throw new Error(`DART 공시 조회 실패: ${JSON.stringify(data)}`);
   }
-  return (data.list || []).map((item) => ({
-    title: item.report_nm,
-    date: item.rcept_dt,
-    link: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${item.rcept_no}`,
-  }));
+  return (data.list || [])
+    .map((item) => ({
+      title: item.report_nm,
+      date: item.rcept_dt,
+      link: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${item.rcept_no}`,
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date)); // API 응답 순서와 무관하게 서버에서도 최신순 보장
 }
 
 // ---------- 주식 분석 에이전트 (Claude API) ----------
@@ -1706,12 +1709,14 @@ async function naverNewsSearch(env, query) {
   if (!res.ok) {
     throw new Error(`네이버 뉴스 API 실패: ${JSON.stringify(data)}`);
   }
-  return (data.items || []).map((item) => ({
-    title: stripHtml(item.title),
-    description: stripHtml(item.description),
-    link: item.originallink || item.link,
-    pubDate: item.pubDate,
-  }));
+  return (data.items || [])
+    .map((item) => ({
+      title: stripHtml(item.title),
+      description: stripHtml(item.description),
+      link: item.originallink || item.link,
+      pubDate: item.pubDate,
+    }))
+    .sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate)); // API 응답 순서와 무관하게 서버에서도 최신순 보장
 }
 
 async function kiwoomQuote(env, token, code) {
