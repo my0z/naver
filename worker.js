@@ -444,9 +444,9 @@ function renderDashboard() {
   </div>
 
   <div class="board topPicksBoard">
-    <h2>🏆 오늘의 TOP 10</h2>
+    <h2>🏆 오늘의 TOP 20</h2>
     <table id="topPicks">
-      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>점수</th></tr></thead>
+      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래량</th><th>체결강도</th><th>점수</th></tr></thead>
       <tbody><tr><td class="empty">데이터 없음</td></tr></tbody>
     </table>
   </div>
@@ -1092,7 +1092,7 @@ function computeTopPicks(latest, streak5Codes) {
       return { ...r, topScore: score };
     })
     .sort((a, b) => b.topScore - a.topScore)
-    .slice(0, 10);
+    .slice(0, 20);
 }
 
 function computeSignalScores(latest, streak3Codes, streak5Codes) {
@@ -1274,6 +1274,8 @@ async function load() {
       (watchlistCodes.has(r.code) ? '★' : '☆') + '</span> ' + r.name,
     fmt(r.price),
     '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
+    fmt(r.volume),
+    '<span class="' + (r.cntr_str >= 100 ? 'up' : 'down') + '">' + (r.cntr_str || 0).toFixed(1) + '</span>',
     '🔥'.repeat(Math.max(1, Math.min(5, Math.round(r.topScore / 10)))),
   ], '데이터 없음');
 
