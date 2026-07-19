@@ -1161,7 +1161,10 @@ function patchTable(tbody, items, renderCells, emptyMessage, onRowClick) {
         td.innerHTML = html;
         tr.appendChild(td);
       });
-      tr.addEventListener('click', () => onRowClick(item));
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('.noRowClick')) return;
+        onRowClick(item);
+      });
     }
     const wantedNext = prevNode ? prevNode.nextSibling : tbody.firstChild;
     if (wantedNext !== tr) tbody.insertBefore(tr, wantedNext);
@@ -1269,7 +1272,7 @@ async function load() {
   const topPicks = computeTopPicks(latestList, streak5Codes);
   const topPicksBody = document.querySelector('#topPicks tbody');
   patchTable(topPicksBody, topPicks, r => [
-    '<span class="topPickStar ' + (watchlistCodes.has(r.code) ? 'active' : '') + '" data-code="' + r.code + '" data-name="' + r.name + '">' +
+    '<span class="topPickStar noRowClick ' + (watchlistCodes.has(r.code) ? 'active' : '') + '" data-code="' + r.code + '" data-name="' + r.name + '">' +
       (watchlistCodes.has(r.code) ? '★' : '☆') + '</span> ' + r.name,
     fmt(r.price),
     '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
