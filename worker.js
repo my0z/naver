@@ -1310,6 +1310,7 @@ document.getElementById('fullReloadBtn').addEventListener('click', (e) => {
 // ---------- 내 매매 기록 ----------
 // ---------- 관심종목(즐겨찾기) ----------
 let watchlistCodes = new Set();
+let watchlistItems = []; // 관심종목 원본 데이터 (낙관적 업데이트 시 이 배열을 직접 조작)
 
 // 실질 수익률 계산: 정수 주식 매수, 매수/매도 수수료 각 0.015%, 매도 시 증권거래세 0.20%(2026년 기준, 코스피/코스닥 동일)
 const KIWOOM_FEE_RATE = 0.00015;
@@ -1339,6 +1340,7 @@ function formatAddedDate(isoString) {
 }
 
 function renderWatchlist(items) {
+  watchlistItems = items;
   watchlistCodes = new Set(items.map(w => w.code));
   const tbody = document.querySelector('#watchlist tbody');
   const rows = items.map(w => {
@@ -1372,8 +1374,11 @@ function renderWatchlist(items) {
   tbody.querySelectorAll('.tradeDelBtn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      fetch('/api/watchlist?code=' + btn.dataset.code, { method: 'DELETE' })
-        .then(() => { loadWatchlist(); if (currentModalCode === btn.dataset.code) updateStarButton(currentModalCode, currentModalName); });
+      const code = btn.dataset.code;
+      watchlistItems = watchlistItems.filter(w => w.code !== code);
+      renderWatchlist(watchlistItems); // 즉시 반영, 응답 안 기다림
+      if (currentModalCode === code) updateStarButton(code, currentModalName);
+      fetch('/api/watchlist?code=' + code, { method: 'DELETE' }).catch(() => {});
     });
   });
 }
@@ -1397,14 +1402,14 @@ function updateStarButton(code, name, price) {
   starBtn.classList.toggle('active', isStarred);
   starBtn.onclick = () => {
     if (watchlistCodes.has(code)) {
-      watchlistCodes.delete(code); // 낙관적 업데이트: 응답 기다리지 않고 즉시 반영
+      watchlistItems = watchlistItems.filter(w => w.code !== code);
+      renderWatchlist(watchlistItems); // 서버 응답 기다리지 않고 로컬에서 즉시 반영 (깜빡임 없음)
       updateStarButton(code, name, price);
-      loadWatchlist();
       fetch('/api/watchlist?code=' + code, { method: 'DELETE' }).catch(() => {});
     } else {
-      watchlistCodes.add(code);
+      watchlistItems = [{ code, name, entry_price: price, added_at: new Date().toISOString() }, ...watchlistItems];
+      renderWatchlist(watchlistItems);
       updateStarButton(code, name, price);
-      loadWatchlist();
       fetch('/api/watchlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1425,16 +1430,16 @@ document.querySelector('#topPicks tbody').addEventListener('click', (e) => {
   const price = (byCodeMap[code] && byCodeMap[code].price) || 0;
 
   if (watchlistCodes.has(code)) {
-    watchlistCodes.delete(code);
+    watchlistItems = watchlistItems.filter(w => w.code !== code);
     star.classList.remove('active');
     star.textContent = '☆';
-    loadWatchlist();
+    renderWatchlist(watchlistItems); // 서버 재조회 없이 로컬에서 즉시 반영
     fetch('/api/watchlist?code=' + code, { method: 'DELETE' }).catch(() => {});
   } else {
-    watchlistCodes.add(code);
+    watchlistItems = [{ code, name, entry_price: price, added_at: new Date().toISOString() }, ...watchlistItems];
     star.classList.add('active');
     star.textContent = '★';
-    loadWatchlist();
+    renderWatchlist(watchlistItems);
     fetch('/api/watchlist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
