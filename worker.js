@@ -354,7 +354,7 @@ function renderDashboard() {
   .aiAnalysisCard {
     background:#17141f; border:1px solid #4c3a80; border-radius:10px;
     padding:12px; font-size:13px; line-height:1.6; color:#ddd; margin-bottom:12px;
-    white-space:pre-wrap;
+    white-space:pre-wrap; max-height:220px; overflow-y:auto;
   }
   .aiAnalysisNote { font-size:10px; color:#666; margin-top:6px; }
   .riskGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; background:#151515; border-radius:10px; padding:10px 12px; font-size:12px; color:#999; margin-bottom:12px; }
@@ -1655,10 +1655,12 @@ async function askStockExpert(env, promptText) {
   const systemPrompt =
     "당신은 한국 주식시장 데이터를 요약/설명하는 보조 도구입니다. " +
     "제공된 데이터(가격, 등락률, 체결강도, 호가잔량, 뉴스, 공시)를 바탕으로 " +
-    "지금 상황에 대한 객관적인 관찰과 주의할 점을 정리하세요. " +
+    "지금 상황에서 눈여겨볼 점과 주의할 리스크만 정리하세요. " +
     "'사세요', '파세요', '지금이 매수 타이밍입니다' 같은 직접적인 매매 추천이나 " +
     "확정적인 가격 전망은 절대 하지 마세요. 데이터에 없는 내용은 추측하지 말고, " +
-    "확실하지 않으면 그렇다고 밝히세요. 한국어로, 4~6문장 정도로 간결하게 답하세요.";
+    "확실하지 않으면 그렇다고 밝히세요. " +
+    "인사말, 서론, '알겠습니다' 같은 도입부나 마무리 멘트 없이 바로 본론만 말하세요. " +
+    "불릿 포인트(-) 3~5개로, 각 항목은 한 문장 이내로 짧게. 전체 300자 이내로 답하세요.";
 
   // Cloudflare Workers AI 무료 티어 (하루 1만 뉴런) - Llama 3.1 8B
   const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fast", {
@@ -1666,7 +1668,7 @@ async function askStockExpert(env, promptText) {
       { role: "system", content: systemPrompt },
       { role: "user", content: promptText },
     ],
-    max_tokens: 600,
+    max_tokens: 300,
   });
   const text = result && (result.response || result.result || result.text);
   if (!text) {
