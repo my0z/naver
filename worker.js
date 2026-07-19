@@ -438,7 +438,7 @@ function renderDashboard() {
   <div class="board">
     <h2>⭐ 관심종목 <span class="intervalTag">(100만원 매수 가정, 수수료·세금 반영)</span></h2>
     <table id="watchlist">
-      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래량</th><th>진입가</th><th>수익률</th><th></th></tr></thead>
+      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>진입가</th><th>수익률</th><th></th></tr></thead>
       <tbody><tr><td class="empty">별표 눌러서 종목을 추가해보세요</td></tr></tbody>
     </table>
   </div>
@@ -1351,7 +1351,6 @@ function loadWatchlist() {
         r.name,
         r.price !== null ? fmt(r.price) : '-',
         r.rate !== null ? '<span class="up">+' + r.rate.toFixed(2) + '%</span>' : '<span class="empty">밴드 밖</span>',
-        r.volume !== null ? fmt(r.volume) : '-',
         r.entryPrice ? fmt(r.entryPrice) + '원' : '-',
         r.pnl
           ? '<span class="' + (r.pnl.netPnlPct >= 0 ? 'pnlPositive' : 'pnlNegative') + '">' +
