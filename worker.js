@@ -430,7 +430,7 @@ function renderDashboard() {
   <div class="board topPicksBoard">
     <h2>🏆 오늘의 TOP 10</h2>
     <table id="topPicks">
-      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>점수</th><th></th></tr></thead>
+      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>점수</th></tr></thead>
       <tbody><tr><td class="empty">데이터 없음</td></tr></tbody>
     </table>
   </div>
@@ -1269,12 +1269,11 @@ async function load() {
   const topPicks = computeTopPicks(latestList, streak5Codes);
   const topPicksBody = document.querySelector('#topPicks tbody');
   patchTable(topPicksBody, topPicks, r => [
-    r.name,
+    '<span class="topPickStar ' + (watchlistCodes.has(r.code) ? 'active' : '') + '" data-code="' + r.code + '" data-name="' + r.name + '">' +
+      (watchlistCodes.has(r.code) ? '★' : '☆') + '</span> ' + r.name,
     fmt(r.price),
     '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
     '🔥'.repeat(Math.max(1, Math.min(5, Math.round(r.topScore / 10)))),
-    '<span class="topPickStar ' + (watchlistCodes.has(r.code) ? 'active' : '') + '" data-code="' + r.code + '" data-name="' + r.name + '">' +
-      (watchlistCodes.has(r.code) ? '★' : '☆') + '</span>',
   ], '데이터 없음', item => copyCodeAndLaunchApp(item.code, item.name));
 
   // 클릭용 종목 정보 매핑 (streak5 + streak3 + top5 + all 합쳐서)
