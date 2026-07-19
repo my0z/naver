@@ -275,12 +275,15 @@ function renderDashboard() {
     padding:20px 16px 24px; animation:slideUp .15s ease-out;
   }
   @keyframes slideUp { from{ transform:translateY(20px); opacity:0; } to{ transform:translateY(0); opacity:1; } }
-  #modalBox h3 { margin:0 0 2px; font-size:17px; }
-  .clickableName { cursor:pointer; text-decoration:underline dotted; }
+  #modalBox h3 { margin:0; font-size:16px; white-space:nowrap; }
+  .clickableName { cursor:pointer; text-decoration:underline dotted; font-size:12px; color:#999; white-space:nowrap; }
   .clickableName:active { opacity:0.6; }
-  .modalHeadRow { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-  #modalBox .modalSub { color:#999; font-size:13px; margin-bottom:16px; }
-  #modalBox .modalSub .up { color:#ff6b6b; margin-left:6px; }
+  .modalHeadRow {
+    display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 10px;
+    margin-bottom:16px;
+  }
+  .modalPriceInline { font-size:15px; color:#eee; font-weight:600; }
+  .modalHeadRow .up { color:#ff6b6b; font-size:14px; }
   #modalDetail:empty { display:none; }
   #modalOrderBook { margin-bottom:12px; }
   .orderBookBar { display:flex; height:10px; border-radius:5px; overflow:hidden; background:#151515; }
@@ -491,9 +494,10 @@ function renderDashboard() {
     <div id="modalBox">
       <div class="modalHeadRow">
         <h3 id="modalName">-</h3>
+        <span id="modalCodeBadge" class="clickableName">코드: -</span>
+        <span id="modalPrice" class="modalPriceInline">-</span>
+        <span class="up" id="modalRate">-</span>
       </div>
-      <div id="modalCodeBadge" class="clickableName">코드: -</div>
-      <div class="modalSub"><span id="modalPrice">-</span><span class="up" id="modalRate">-</span></div>
       <div id="modalOrderBook"></div>
       <div id="modalNewsLinks"></div>
       <div id="modalNewsSummary"></div>
