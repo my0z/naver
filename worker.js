@@ -283,9 +283,17 @@ function renderDashboard() {
     margin-bottom:16px;
   }
   .modalPriceInline { font-size:15px; color:#eee; font-weight:600; }
-  .starBtn { font-size:20px; cursor:pointer; color:#666; }
+  .starBtn {
+    font-size:26px; cursor:pointer; color:#666;
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:40px; min-height:40px; padding:4px;
+  }
   .starBtn.active { color:#ffd43b; }
-  .topPickStar { font-size:16px; cursor:pointer; color:#666; }
+  .topPickStar {
+    font-size:20px; cursor:pointer; color:#666;
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:36px; min-height:36px; padding:6px; vertical-align:middle;
+  }
   .topPickStar.active { color:#ffd43b; }
   .modalHeadRow .up { color:#ff6b6b; font-size:14px; }
   #modalDetail:empty { display:none; }
