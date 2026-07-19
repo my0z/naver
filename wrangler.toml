@@ -1066,6 +1066,10 @@ function computeSignalScores(latest, streak3Codes, streak5Codes) {
   const tradeValSorted = [...latest].map(r => (r.price || 0) * (r.volume || 0)).sort((a, b) => b - a);
   const tradeVal30Cutoff = tradeValSorted[Math.max(0, Math.floor(tradeValSorted.length * 0.3) - 1)] || 0;
 
+  const kst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  const kstMinutes = kst.getHours() * 60 + kst.getMinutes();
+  const isGoldenTime = kstMinutes >= 9 * 60 && kstMinutes <= 9 * 60 + 30;
+
   latest.forEach(r => {
     let n = 0;
     const checks = [];
@@ -1075,9 +1079,11 @@ function computeSignalScores(latest, streak3Codes, streak5Codes) {
     if ((r.volume || 0) >= top30Cutoff) { n++; checks.push('거래량 상위30%'); }
     if (streak3Codes.has(r.code) || streak5Codes.has(r.code)) { n++; checks.push('연속상승 중'); }
     if (tradeValue >= tradeVal30Cutoff) { n++; checks.push('거래대금 상위30%'); }
+    if (isGoldenTime) { n++; checks.push('골든타임(09:00~09:30) 중'); }
     r.signalScore = n;
     r.signalChecks = checks;
     r.tradeValue = tradeValue;
+    r.lowPriceWarning = (r.price || 0) < 2000; // 감점 대신 별도 경고 표시(동전주 위험)
   });
 }
 
@@ -1143,7 +1149,7 @@ function renderAllTable() {
     '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
     fmt(r.volume),
     '<span class="' + (r.cntr_str >= 100 ? 'up' : 'down') + '">' + (r.cntr_str || 0).toFixed(1) + '</span>',
-    '<span title="' + ((r.signalChecks || []).join(', ') || '조건 없음') + '">' + '🔥'.repeat(r.signalScore || 0) + '</span>',
+    '<span title="' + ((r.signalChecks || []).join(', ') || '조건 없음') + '">' + '🔥'.repeat(r.signalScore || 0) + (r.lowPriceWarning ? ' ⚠️' : '') + '</span>',
   ], '데이터 없음');
 }
 
