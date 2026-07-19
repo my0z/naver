@@ -410,11 +410,19 @@ function renderDashboard() {
     box-shadow:0 2px 8px rgba(0,0,0,0.4); cursor:pointer;
   }
   #collectBtn.spinning { animation:spin 0.9s linear infinite; }
+  #fullReloadBtn {
+    position:fixed; right:14px; top:calc(50% + 90px); transform:translateY(-50%);
+    width:50px; height:50px; border-radius:50%; border:none;
+    background:#4d9fff; color:#111; font-size:20px; z-index:90;
+    box-shadow:0 2px 8px rgba(0,0,0,0.4); cursor:pointer;
+  }
+  #fullReloadBtn.spinning { animation:spin 0.6s linear; }
 </style>
 </head>
 <body>
   <button id="reloadBtn" title="화면 새로고침">🔄</button>
   <button id="collectBtn" title="지금 시세 즉시 수집">⚡</button>
+  <button id="fullReloadBtn" title="전체 페이지 리로드">🔁</button>
   <h1>🔥 급등주 스크리너</h1>
   <div class="sub" id="ts">불러오는 중...</div>
   <div id="goldenWindowBanner" style="display:none;"></div>
@@ -1278,6 +1286,11 @@ async function load() {
 document.getElementById('reloadBtn').addEventListener('click', (e) => {
   e.target.classList.add('spinning');
   load().finally(() => setTimeout(() => e.target.classList.remove('spinning'), 600));
+});
+
+document.getElementById('fullReloadBtn').addEventListener('click', (e) => {
+  e.target.classList.add('spinning');
+  location.reload();
 });
 
 // ---------- 내 매매 기록 ----------
