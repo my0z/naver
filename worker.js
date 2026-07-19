@@ -283,6 +283,8 @@ function renderDashboard() {
     margin-bottom:16px;
   }
   .modalPriceInline { font-size:15px; color:#eee; font-weight:600; }
+  .starBtn { font-size:20px; cursor:pointer; color:#666; }
+  .starBtn.active { color:#ffd43b; }
   .modalHeadRow .up { color:#ff6b6b; font-size:14px; }
   #modalDetail:empty { display:none; }
   #modalOrderBook { margin-bottom:12px; }
@@ -304,6 +306,10 @@ function renderDashboard() {
   }
   .newsItemTitle { font-size:12px; color:#eee; font-weight:600; margin-bottom:2px; }
   .newsItemDesc { font-size:11px; color:#888; line-height:1.4; }
+  .sentimentTag { display:inline-block; font-size:10px; padding:1px 6px; border-radius:8px; font-weight:700; margin-right:2px; }
+  .sentimentTag.sentimentUp { background:#2a1616; color:#ff8787; }
+  .sentimentTag.sentimentDown { background:#16243a; color:#4d9fff; }
+  .sentimentTag.sentimentNeutral { background:#222; color:#999; }
   #modalDartSummary { margin-bottom:12px; max-height:78px; overflow-y:auto; }
   .dartItem { border-left:2px solid #ffd43b; }
   .highGap { font-size:11px; color:#888; margin-top:2px; }
@@ -362,7 +368,7 @@ function renderDashboard() {
   .aiAnalysisCard {
     background:#17141f; border:1px solid #4c3a80; border-radius:10px;
     padding:12px; font-size:13px; line-height:1.6; color:#ddd; margin-bottom:12px;
-    white-space:pre-wrap; max-height:220px; overflow-y:auto;
+    white-space:pre-wrap; max-height:340px; overflow-y:auto;
   }
   .aiAnalysisNote { font-size:10px; color:#666; margin-top:6px; }
   .riskGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; background:#151515; border-radius:10px; padding:10px 12px; font-size:12px; color:#999; margin-bottom:12px; }
@@ -370,6 +376,10 @@ function renderDashboard() {
   .riskGrid .stopLoss b { color:#4d9fff; }
   .riskGrid .takeProfit b { color:#ff6b6b; }
   .riskNote { font-size:10px; color:#666; margin-top:6px; grid-column:1 / -1; }
+  .gcCard { border-radius:10px; padding:10px 12px; font-size:13px; font-weight:600; margin-bottom:12px; }
+  .gcCard.gcUp { background:#1c2a1c; color:#69db7c; }
+  .gcCard.gcDown { background:#2a1c1c; color:#ff8787; }
+  .gcDetail { font-size:11px; color:#999; font-weight:normal; margin-top:4px; }
   .modalBtn.cancel { background:transparent; color:#888; margin-bottom:0; padding:10px; }
   .streakBoard h2 { color:#ffd43b; }
   .streakBoard.streak5 h2 { color:#69db7c; }
@@ -398,21 +408,22 @@ function renderDashboard() {
     box-shadow:0 2px 8px rgba(0,0,0,0.4); cursor:pointer;
   }
   #collectBtn.spinning { animation:spin 0.9s linear infinite; }
-  #installBtn {
-    position:fixed; left:50%; bottom:16px; transform:translateX(-50%);
-    padding:10px 18px; border-radius:24px; border:none;
-    background:#4d9fff; color:#111; font-size:14px; font-weight:600; z-index:95;
-    box-shadow:0 2px 10px rgba(0,0,0,0.5); cursor:pointer; white-space:nowrap;
-  }
 </style>
 </head>
 <body>
   <button id="reloadBtn" title="화면 새로고침">🔄</button>
   <button id="collectBtn" title="지금 시세 즉시 수집">⚡</button>
-  <button id="installBtn" title="홈 화면에 추가" style="display:none;">📲 앱 설치</button>
   <h1>🔥 급등주 스크리너</h1>
   <div class="sub" id="ts">불러오는 중...</div>
   <div id="goldenWindowBanner" style="display:none;"></div>
+
+  <div class="board">
+    <h2>⭐ 관심종목 <span class="intervalTag">(추가 시점 100만원 매수 가정)</span></h2>
+    <table id="watchlist">
+      <thead><tr><th>종목</th><th>현재가</th><th>진입가</th><th>수익률</th><th></th></tr></thead>
+      <tbody><tr><td class="empty">별표 눌러서 종목을 추가해보세요</td></tr></tbody>
+    </table>
+  </div>
 
   <div class="board topPicksBoard">
     <h2>🏆 오늘의 TOP 10</h2>
@@ -493,6 +504,7 @@ function renderDashboard() {
   <div id="modalOverlay">
     <div id="modalBox">
       <div class="modalHeadRow">
+        <span id="modalStarBtn" class="starBtn">☆</span>
         <h3 id="modalName">-</h3>
         <span id="modalCodeBadge" class="clickableName">코드: -</span>
         <span id="modalPrice" class="modalPriceInline">-</span>
@@ -581,6 +593,7 @@ function openStockModal(item) {
   modalPriceBtn.onclick = () => { currentModalView = 'quote'; showQuote(item.code); };
   modalRiskBtn.onclick = () => { currentModalView = 'risk'; showRiskLevels(item.code); };
   modalAiBtn.onclick = () => { currentModalView = 'ai'; showAiAnalysis(item); };
+  updateStarButton(item.code, item.name);
   modalOverlay.classList.add('open');
   setHeavyButtonsDisabled(true);
   chartFullPrices = []; chartWindowSize = 0; chartOffsetFromEnd = 0;
@@ -691,12 +704,14 @@ function renderNewsLinks(name, code) {
         summaryEl.innerHTML = '';
         return;
       }
-      summaryEl.innerHTML = data.items.map(item =>
-        '<a class="newsItem" href="' + item.link + '" target="_blank" rel="noopener">' +
-          '<div class="newsItemTitle">' + item.title + '</div>' +
+      summaryEl.innerHTML = data.items.map(item => {
+        const tagClass = item.sentiment === '호재' ? 'sentimentUp' : item.sentiment === '악재' ? 'sentimentDown' : 'sentimentNeutral';
+        const tagHtml = item.sentiment ? '<span class="sentimentTag ' + tagClass + '">' + item.sentiment + '</span>' : '';
+        return '<a class="newsItem" href="' + item.link + '" target="_blank" rel="noopener">' +
+          '<div class="newsItemTitle">' + tagHtml + ' ' + item.title + '</div>' +
           '<div class="newsItemDesc">' + item.description + '</div>' +
-        '</a>'
-      ).join('');
+        '</a>';
+      }).join('');
     })
     .catch(() => { summaryEl.innerHTML = ''; });
 
@@ -753,13 +768,27 @@ function showRiskLevels(code, silent) {
       }
       const riskPct = ((data.currentPrice - data.stopLoss) / data.currentPrice * 100).toFixed(2);
       const rewardPct = ((data.takeProfit - data.currentPrice) / data.currentPrice * 100).toFixed(2);
+      let gcHtml = '';
+      if (data.goldenCross) {
+        const gc = data.goldenCross;
+        const label = gc.justCrossed ? '🌟 골든크로스 발생 (5일선이 20일선 방금 돌파)'
+          : gc.justCrossedDown ? '💀 데드크로스 발생 (5일선이 20일선 아래로)'
+          : gc.isAligned ? '📈 정배열 (5일선 > 20일선)'
+          : '📉 역배열 (5일선 < 20일선)';
+        gcHtml =
+          '<div class="gcCard ' + (gc.isAligned ? 'gcUp' : 'gcDown') + '">' +
+          label +
+          '<div class="gcDetail">5일선 ' + fmt(Math.round(gc.sma5)) + '원 · 20일선 ' + fmt(Math.round(gc.sma20)) + '원</div>' +
+          '</div>';
+      }
       modalDetail.innerHTML =
         '<div class="riskGrid">' +
         '<div>현재가<b>' + fmt(data.currentPrice) + '원</b></div>' +
         '<div>14일 ATR<b>' + fmt(Math.round(data.atr)) + '원</b></div>' +
         '<div class="stopLoss">손절 라인 (-' + riskPct + '%)<b>' + fmt(data.stopLoss) + '원</b></div>' +
         '<div class="takeProfit">익절 라인 (+' + rewardPct + '%)<b>' + fmt(data.takeProfit) + '원</b></div>' +
-        '</div>';
+        '</div>' +
+        gcHtml;
     })
     .catch(err => {
       if (!silent) modalDetail.innerHTML = '<div class="detailError">요청 오류: ' + err.message + '</div>';
@@ -1073,6 +1102,10 @@ function computeSignalScores(latest, streak3Codes, streak5Codes) {
   const tradeValSorted = [...latest].map(r => (r.price || 0) * (r.volume || 0)).sort((a, b) => b - a);
   const tradeVal30Cutoff = tradeValSorted[Math.max(0, Math.floor(tradeValSorted.length * 0.3) - 1)] || 0;
 
+  const kst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  const kstMinutes = kst.getHours() * 60 + kst.getMinutes();
+  const isGoldenTime = kstMinutes >= 9 * 60 && kstMinutes <= 9 * 60 + 30;
+
   latest.forEach(r => {
     let n = 0;
     const checks = [];
@@ -1082,9 +1115,11 @@ function computeSignalScores(latest, streak3Codes, streak5Codes) {
     if ((r.volume || 0) >= top30Cutoff) { n++; checks.push('거래량 상위30%'); }
     if (streak3Codes.has(r.code) || streak5Codes.has(r.code)) { n++; checks.push('연속상승 중'); }
     if (tradeValue >= tradeVal30Cutoff) { n++; checks.push('거래대금 상위30%'); }
+    if (isGoldenTime) { n++; checks.push('골든타임(09:00~09:30) 중'); }
     r.signalScore = n;
     r.signalChecks = checks;
     r.tradeValue = tradeValue;
+    r.lowPriceWarning = (r.price || 0) < 2000; // 감점 대신 별도 경고 표시(동전주 위험)
   });
 }
 
@@ -1150,7 +1185,7 @@ function renderAllTable() {
     '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
     fmt(r.volume),
     '<span class="' + (r.cntr_str >= 100 ? 'up' : 'down') + '">' + (r.cntr_str || 0).toFixed(1) + '</span>',
-    '<span title="' + ((r.signalChecks || []).join(', ') || '조건 없음') + '">' + '🔥'.repeat(r.signalScore || 0) + '</span>',
+    '<span title="' + ((r.signalChecks || []).join(', ') || '조건 없음') + '">' + '🔥'.repeat(r.signalScore || 0) + (r.lowPriceWarning ? ' ⚠️' : '') + '</span>',
   ], '데이터 없음');
 }
 
@@ -1249,6 +1284,7 @@ async function load() {
   });
 
   renderAllTable();
+  loadWatchlist();
 }
 
 function copyCodeAndLaunchApp(code, name) {
@@ -1265,6 +1301,76 @@ document.getElementById('reloadBtn').addEventListener('click', (e) => {
 });
 
 // ---------- 내 매매 기록 ----------
+// ---------- 관심종목(즐겨찾기) ----------
+let watchlistCodes = new Set();
+
+function loadWatchlist() {
+  fetch('/api/watchlist')
+    .then(res => res.json())
+    .then(data => {
+      if (!data.ok) return;
+      watchlistCodes = new Set(data.items.map(w => w.code));
+      const tbody = document.querySelector('#watchlist tbody');
+      const rows = data.items.map(w => {
+        const live = byCodeMap[w.code];
+        const currentPrice = live ? live.price : null;
+        const entryPrice = w.entry_price || 0;
+        let pnlPct = null, pnlAmount = null;
+        if (currentPrice !== null && entryPrice > 0) {
+          pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+          pnlAmount = Math.round(1000000 * (currentPrice / entryPrice)) - 1000000;
+        }
+        return {
+          code: w.code, name: w.name,
+          price: currentPrice, rate: live ? live.rate : null,
+          entryPrice, pnlPct, pnlAmount,
+        };
+      });
+      patchTable(tbody, rows, r => [
+        r.name,
+        r.price !== null ? fmt(r.price) : '-',
+        r.entryPrice ? fmt(r.entryPrice) + '원' : '-',
+        r.pnlPct !== null
+          ? '<span class="' + (r.pnlPct >= 0 ? 'pnlPositive' : 'pnlNegative') + '">' +
+            (r.pnlPct >= 0 ? '+' : '') + r.pnlPct.toFixed(2) + '% (' + (r.pnlAmount >= 0 ? '+' : '') + fmt(r.pnlAmount) + '원)</span>'
+          : '<span class="empty">밴드 밖</span>',
+        '<span class="tradeDelBtn" data-code="' + r.code + '">🗑️</span>',
+      ], '별표 눌러서 종목을 추가해보세요', item => {
+        const live = byCodeMap[item.code];
+        openStockModal(live || { code: item.code, name: item.name, price: item.price || 0, rate: item.rate || 0, buyReq: 0, selReq: 0 });
+      });
+      tbody.querySelectorAll('.tradeDelBtn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          fetch('/api/watchlist?code=' + btn.dataset.code, { method: 'DELETE' })
+            .then(() => { loadWatchlist(); if (currentModalCode === btn.dataset.code) updateStarButton(currentModalCode, currentModalName); });
+        });
+      });
+    })
+    .catch(() => {});
+}
+
+function updateStarButton(code, name) {
+  const starBtn = document.getElementById('modalStarBtn');
+  const isStarred = watchlistCodes.has(code);
+  starBtn.textContent = isStarred ? '★' : '☆';
+  starBtn.classList.toggle('active', isStarred);
+  starBtn.onclick = () => {
+    if (watchlistCodes.has(code)) {
+      fetch('/api/watchlist?code=' + code, { method: 'DELETE' })
+        .then(() => { watchlistCodes.delete(code); updateStarButton(code, name); loadWatchlist(); });
+    } else {
+      fetch('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, name }),
+      }).then(() => { watchlistCodes.add(code); updateStarButton(code, name); loadWatchlist(); });
+    }
+  };
+}
+
+loadWatchlist();
+
 function loadTradeLog() {
   const statsBar = document.getElementById('tradeStatsBar');
   const tbody = document.querySelector('#tradeLog tbody');
@@ -1454,30 +1560,8 @@ if (isStandalone && document.documentElement.requestFullscreen) {
   document.addEventListener('click', tryFullscreen, { once: true });
 }
 
-// ---------- PWA 설치 배너: 크롬 기본 하단 배너 대신 커스텀 버튼으로 필요할 때만 노출 ----------
-let deferredInstallPrompt = null;
-const installBtn = document.getElementById('installBtn');
-
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault(); // 크롬이 자동으로 하단에 띄우는 기본 배너 억제
-  deferredInstallPrompt = e;
-  if (installBtn) installBtn.style.display = 'block';
-});
-
-if (installBtn) {
-  installBtn.addEventListener('click', async () => {
-    if (!deferredInstallPrompt) return;
-    installBtn.style.display = 'none';
-    deferredInstallPrompt.prompt();
-    await deferredInstallPrompt.userChoice;
-    deferredInstallPrompt = null;
-  });
-}
-
-window.addEventListener('appinstalled', () => {
-  if (installBtn) installBtn.style.display = 'none';
-  deferredInstallPrompt = null;
-});
+// 크롬이 자동으로 띄우는 PWA 설치 배너 억제 (설치 유도 기능 자체를 없앰)
+window.addEventListener('beforeinstallprompt', (e) => e.preventDefault());
 </script>
 </body>
 </html>`;
@@ -1669,15 +1753,20 @@ async function askStockExpert(env, promptText) {
   const systemPrompt =
     "당신은 한국 주식시장 데이터를 해석하는 보조 도구입니다. " +
     "주어진 항목(가격, 등락률, 체결강도, 호가잔량, 뉴스, 공시)을 그대로 다시 나열하지 마세요 — " +
-    "이미 사용자가 화면에서 다 보고 있는 정보입니다. 대신 항목들을 서로 연결지어, " +
-    "지금 뭐가 특이하거나 앞뒤가 안 맞는지, 어떤 리스크 신호가 있는지를 해석해서 말하세요. " +
-    "예: 뉴스/공시 내용이 오늘 상승과 시점상 관련 있어 보이는지, 체결강도와 호가잔량이 같은 " +
-    "방향인지 엇갈리는지, 이런 상승 후 보통 어떤 리스크가 따르는지. " +
-    "연결점이 실제로 없으면 억지로 만들지 말고 '특별한 연관성 확인 안 됨'이라고 하세요. " +
+    "이미 사용자가 화면에서 다 보고 있는 정보입니다. 대신 항목들을 서로 연결지어 깊이 있게 해석하세요. " +
+    "다음 구조로 답하세요:\n" +
+    "**긍정적 신호**: 지금 상황에서 우호적으로 보이는 부분과 그 이유\n" +
+    "**주의할 점**: 앞뒤가 안 맞거나 리스크로 보이는 부분과 그 이유\n" +
+    "**뉴스/공시 연관성**: 최근 뉴스나 공시가 오늘 등락률과 시점상 관련 있어 보이는지, " +
+    "관련 있다면 어떻게 관련 있는지 구체적으로. 관련 없어 보이면 '특별한 연관성 확인 안 됨'이라고 명시\n" +
+    "**참고**: 이런 유형의 급등 이후 통상적으로 나타나는 패턴이나 유의사항\n" +
+    "각 섹션은 2~4문장으로 구체적으로 설명하세요. 애매하게 얼버무리지 말고, " +
+    "왜 그렇게 판단했는지 근거를 같이 말하세요. " +
     "'사세요', '파세요', '지금이 매수 타이밍입니다' 같은 직접적인 매매 추천이나 " +
-    "확정적인 가격 전망은 절대 하지 마세요. " +
+    "확정적인 가격 전망은 절대 하지 마세요. 데이터에 없는 내용은 추측하지 말고, " +
+    "확실하지 않으면 그렇다고 밝히세요. " +
     "인사말, 서론, '알겠습니다' 같은 도입부나 마무리 멘트 없이 바로 본론만 말하세요. " +
-    "불릿 포인트(-) 3~5개로, 각 항목은 한 문장 이내로 짧게. 전체 300자 이내로 답하세요.";
+    "전체 800자 내외로 답하세요.";
 
   // Cloudflare Workers AI 무료 티어 (하루 1만 뉴런) - Llama 3.1 8B
   const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fast", {
@@ -1685,7 +1774,7 @@ async function askStockExpert(env, promptText) {
       { role: "system", content: systemPrompt },
       { role: "user", content: promptText },
     ],
-    max_tokens: 300,
+    max_tokens: 700,
   });
   const text = result && (result.response || result.result || result.text);
   if (!text) {
@@ -1717,6 +1806,33 @@ async function naverNewsSearch(env, query) {
       pubDate: item.pubDate,
     }))
     .sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate)); // API 응답 순서와 무관하게 서버에서도 최신순 보장
+}
+
+// 뉴스 헤드라인들을 한 번에 호재/악재/중립으로 분류 (뉴런 절약을 위해 개별 호출 대신 일괄 처리)
+async function classifyNewsSentiment(env, items) {
+  if (!items.length || !env.AI) return items;
+  const listText = items.map((n, i) => `${i + 1}. ${n.title}`).join("\n");
+  const prompt =
+    `다음 주식 관련 뉴스 제목들을 각각 "호재", "악재", "중립" 중 하나로 분류하세요. ` +
+    `설명 없이 정확히 "번호: 분류" 형식으로 한 줄씩만 답하세요.\n\n${listText}`;
+  try {
+    const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fast", {
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 150,
+    });
+    const text = (result && (result.response || result.result || result.text)) || "";
+    const tags = {};
+    text.split("\n").forEach((line) => {
+      const m = line.match(/(\d+)\s*[:.\-]\s*(호재|악재|중립)/);
+      if (m) tags[m[1]] = m[2];
+    });
+    items.forEach((item, i) => {
+      item.sentiment = tags[String(i + 1)] || null;
+    });
+  } catch (e) {
+    // 감성분석 실패해도 뉴스 자체는 그대로 보여줌 (sentiment: null)
+  }
+  return items;
 }
 
 async function kiwoomQuote(env, token, code) {
@@ -1832,6 +1948,26 @@ function computeATR(ohlc, period) {
   }
   const recent = trs.slice(-period);
   return recent.reduce((s, v) => s + v, 0) / recent.length;
+}
+
+// 5일선/20일선 골든크로스(정배열 전환) 계산
+function computeGoldenCross(ohlc) {
+  if (ohlc.length < 22) return null; // 20일선 계산 + 전날 비교를 위해 최소 22개 필요
+  const sma = (arr, n, endIdx) => {
+    const slice = arr.slice(endIdx - n + 1, endIdx + 1);
+    return slice.reduce((s, v) => s + v.close, 0) / n;
+  };
+  const lastIdx = ohlc.length - 1;
+  const sma5Today = sma(ohlc, 5, lastIdx);
+  const sma20Today = sma(ohlc, 20, lastIdx);
+  const sma5Yesterday = sma(ohlc, 5, lastIdx - 1);
+  const sma20Yesterday = sma(ohlc, 20, lastIdx - 1);
+
+  const isAligned = sma5Today > sma20Today; // 정배열 (5일선이 20일선 위)
+  const justCrossed = sma5Yesterday <= sma20Yesterday && sma5Today > sma20Today; // 어제까지 아니었는데 오늘 처음 뚫음
+  const justCrossedDown = sma5Yesterday >= sma20Yesterday && sma5Today < sma20Today; // 데드크로스
+
+  return { sma5: sma5Today, sma20: sma20Today, isAligned, justCrossed, justCrossedDown };
 }
 
 function parseKiwoomChart(json) {
@@ -2038,6 +2174,47 @@ self.addEventListener('fetch', (e) => {
         return new Response(sw, { headers: { "content-type": "application/javascript" } });
       }
 
+      if (url.pathname === "/api/watchlist" && request.method === "GET") {
+        try {
+          const res = await env.DB.prepare(`SELECT * FROM watchlist ORDER BY added_at DESC`).all();
+          return Response.json({ ok: true, items: res.results });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/watchlist" && request.method === "POST") {
+        try {
+          const { code, name } = await request.json();
+          if (!code || !name) return Response.json({ ok: false, error: "code, name 필요" }, { status: 400 });
+          let entryPrice = 0;
+          try {
+            const token = await kiwoomIssueToken(env);
+            const quoteRaw = await kiwoomQuote(env, token, code);
+            entryPrice = parseKiwoomQuote(quoteRaw).price || 0;
+          } catch (e) {
+            // 시세 조회 실패해도 관심종목 등록 자체는 진행 (진입가 0으로 저장)
+          }
+          await env.DB.prepare(`INSERT OR REPLACE INTO watchlist (code, name, added_at, entry_price) VALUES (?, ?, ?, ?)`)
+            .bind(code, name, new Date().toISOString(), entryPrice)
+            .run();
+          return Response.json({ ok: true, entryPrice });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/watchlist" && request.method === "DELETE") {
+        try {
+          const code = url.searchParams.get("code");
+          if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
+          await env.DB.prepare(`DELETE FROM watchlist WHERE code = ?`).bind(code).run();
+          return Response.json({ ok: true });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
       if (url.pathname === "/api/latest") {
         const data = await getLatest(env);
         return Response.json(data);
@@ -2103,6 +2280,7 @@ self.addEventListener('fetch', (e) => {
           const q = url.searchParams.get("q");
           if (!q) return Response.json({ ok: false, error: "q 누락" }, { status: 400 });
           const items = await naverNewsSearch(env, q);
+          await classifyNewsSentiment(env, items);
           return Response.json({ ok: true, items });
         } catch (e) {
           return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
@@ -2249,6 +2427,7 @@ self.addEventListener('fetch', (e) => {
             kiwoomQuote(env, token, code),
           ]);
           const atr = computeATR(ohlc, 14);
+          const goldenCross = computeGoldenCross(ohlc);
           const quote = parseKiwoomQuote(quoteRaw);
           if (!atr) {
             return Response.json({ ok: false, error: "ATR 계산에 필요한 일봉 데이터가 부족합니다" });
@@ -2259,6 +2438,7 @@ self.addEventListener('fetch', (e) => {
             currentPrice: quote.price,
             stopLoss: Math.round(quote.price - atr * 1.5),
             takeProfit: Math.round(quote.price + atr * 2),
+            goldenCross,
           });
         } catch (e) {
           return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
