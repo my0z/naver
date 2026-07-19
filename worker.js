@@ -577,7 +577,7 @@ function openStockModal(item) {
   modalPriceBtn.onclick = () => { currentModalView = 'quote'; showQuote(item.code); };
   modalRiskBtn.onclick = () => { currentModalView = 'risk'; showRiskLevels(item.code); };
   modalAiBtn.onclick = () => { currentModalView = 'ai'; showAiAnalysis(item); };
-  updateStarButton(item.code, item.name);
+  updateStarButton(item.code, item.name, item.price);
   modalOverlay.classList.add('open');
   setHeavyButtonsDisabled(true);
   chartFullPrices = []; chartWindowSize = 0; chartOffsetFromEnd = 0;
@@ -1348,21 +1348,26 @@ function loadWatchlist() {
     .catch(() => {});
 }
 
-function updateStarButton(code, name) {
+function updateStarButton(code, name, price) {
   const starBtn = document.getElementById('modalStarBtn');
   const isStarred = watchlistCodes.has(code);
   starBtn.textContent = isStarred ? '★' : '☆';
   starBtn.classList.toggle('active', isStarred);
   starBtn.onclick = () => {
     if (watchlistCodes.has(code)) {
-      fetch('/api/watchlist?code=' + code, { method: 'DELETE' })
-        .then(() => { watchlistCodes.delete(code); updateStarButton(code, name); loadWatchlist(); });
+      watchlistCodes.delete(code); // 낙관적 업데이트: 응답 기다리지 않고 즉시 반영
+      updateStarButton(code, name, price);
+      loadWatchlist();
+      fetch('/api/watchlist?code=' + code, { method: 'DELETE' }).catch(() => {});
     } else {
+      watchlistCodes.add(code);
+      updateStarButton(code, name, price);
+      loadWatchlist();
       fetch('/api/watchlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, name }),
-      }).then(() => { watchlistCodes.add(code); updateStarButton(code, name); loadWatchlist(); });
+        body: JSON.stringify({ code, name, price }),
+      }).catch(() => {});
     }
   };
 }
@@ -1375,15 +1380,24 @@ document.querySelector('#topPicks tbody').addEventListener('click', (e) => {
   if (!star) return;
   e.stopPropagation();
   const code = star.dataset.code, name = star.dataset.name;
+  const price = (byCodeMap[code] && byCodeMap[code].price) || 0;
+
   if (watchlistCodes.has(code)) {
-    fetch('/api/watchlist?code=' + code, { method: 'DELETE' })
-      .then(() => { watchlistCodes.delete(code); loadWatchlist(); load(); });
+    watchlistCodes.delete(code);
+    star.classList.remove('active');
+    star.textContent = '☆';
+    loadWatchlist();
+    fetch('/api/watchlist?code=' + code, { method: 'DELETE' }).catch(() => {});
   } else {
+    watchlistCodes.add(code);
+    star.classList.add('active');
+    star.textContent = '★';
+    loadWatchlist();
     fetch('/api/watchlist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, name }),
-    }).then(() => { watchlistCodes.add(code); loadWatchlist(); load(); });
+      body: JSON.stringify({ code, name, price }),
+    }).catch(() => {});
   }
 });
 
@@ -2214,15 +2228,18 @@ self.addEventListener('fetch', (e) => {
 
       if (url.pathname === "/api/watchlist" && request.method === "POST") {
         try {
-          const { code, name } = await request.json();
+          const { code, name, price } = await request.json();
           if (!code || !name) return Response.json({ ok: false, error: "code, name 필요" }, { status: 400 });
-          let entryPrice = 0;
-          try {
-            const token = await kiwoomIssueToken(env);
-            const quoteRaw = await kiwoomQuote(env, token, code);
-            entryPrice = parseKiwoomQuote(quoteRaw).price || 0;
-          } catch (e) {
-            // 시세 조회 실패해도 관심종목 등록 자체는 진행 (진입가 0으로 저장)
+          let entryPrice = Number(price) || 0;
+          if (!entryPrice) {
+            // 클라이언트가 현재가를 안 보내준 경우에만(예외적) 키움 API로 조회 (느림)
+            try {
+              const token = await kiwoomIssueToken(env);
+              const quoteRaw = await kiwoomQuote(env, token, code);
+              entryPrice = parseKiwoomQuote(quoteRaw).price || 0;
+            } catch (e) {
+              // 시세 조회 실패해도 관심종목 등록 자체는 진행 (진입가 0으로 저장)
+            }
           }
           await env.DB.prepare(`INSERT OR REPLACE INTO watchlist (code, name, added_at, entry_price) VALUES (?, ?, ?, ?)`)
             .bind(code, name, new Date().toISOString(), entryPrice)
