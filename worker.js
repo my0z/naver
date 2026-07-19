@@ -508,7 +508,7 @@ function renderDashboard() {
       <div class="modalHeadRow">
         <span id="modalStarBtn" class="starBtn">☆</span>
         <h3 id="modalName">-</h3>
-        <span id="modalCodeBadge" class="clickableName">코드: -</span>
+        <span id="modalCodeBadge">코드: -</span>
         <span id="modalPrice" class="modalPriceInline">-</span>
         <span class="up" id="modalRate">-</span>
       </div>
@@ -557,24 +557,6 @@ let currentModalPeriod = '5';
 let currentModalView = 'chart'; // 'chart' | 'quote' - 자동갱신이 어느 화면을 새로고침할지
 let chartRefreshTimer = null;
 const CHART_REFRESH_MS = 3000; // 3초마다 자동 갱신 (ka10079~83 / ka10007, TR당 초당1건 제한에 여유있게 준수)
-const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-const KIWOOM_SCHEME_URL = 'heromts://heromtshost';
-const KIWOOM_PLAYSTORE = 'https://play.google.com/store/apps/details?id=com.kiwoom.heromts';
-const KIWOOM_APPSTORE = 'https://apps.apple.com/kr/app/id1570370057';
-
-function launchKiwoomApp() {
-  // 실제 등록된 커스텀 스킴으로 바로 실행 (플레이스토어 경유 없음)
-  window.location.href = KIWOOM_SCHEME_URL;
-  // 스킴으로 안 열렸을 경우(앱 미설치 등) 잠시 후 스토어로 안내
-  setTimeout(() => {
-    if (document.hidden) return; // 이미 앱으로 전환됐으면 아무것도 안 함
-    window.location.href = /Android/i.test(navigator.userAgent) ? KIWOOM_PLAYSTORE : KIWOOM_APPSTORE;
-  }, 1200);
-}
-
-modalCodeBadge.addEventListener('click', () => {
-  if (IS_MOBILE) launchKiwoomApp();
-});
 
 function openStockModal(item) {
   // 모달 뜨기 전에 종목코드부터 클립보드로 복사
@@ -1277,7 +1259,7 @@ async function load() {
     fmt(r.price),
     '<span class="up">+' + r.change_rate.toFixed(2) + '%</span>',
     '🔥'.repeat(Math.max(1, Math.min(5, Math.round(r.topScore / 10)))),
-  ], '데이터 없음', item => copyCodeAndLaunchApp(item.code, item.name));
+  ], '데이터 없음');
 
   // 클릭용 종목 정보 매핑 (streak5 + streak3 + top5 + all 합쳐서)
   byCodeMap = {};
@@ -1291,14 +1273,6 @@ async function load() {
 
   renderAllTable();
   loadWatchlist();
-}
-
-function copyCodeAndLaunchApp(code, name) {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(code).catch(() => {});
-  }
-  if (IS_MOBILE) launchKiwoomApp();
-  else alert(name + ' (' + code + ') 코드가 복사되었습니다.');
 }
 
 document.getElementById('reloadBtn').addEventListener('click', (e) => {
