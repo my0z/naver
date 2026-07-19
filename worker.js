@@ -1649,35 +1649,30 @@ async function fetchDartDisclosures(env, corpCode) {
 
 // ---------- 주식 분석 에이전트 (Claude API) ----------
 async function askStockExpert(env, promptText) {
-  if (!env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY 시크릿이 설정되지 않았습니다.");
+  if (!env.AI) {
+    throw new Error("AI 바인딩이 설정되지 않았습니다. wrangler.toml에 [ai] binding=\"AI\" 필요.");
   }
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1000,
-      system:
-        "당신은 한국 주식시장 데이터를 요약/설명하는 보조 도구입니다. " +
-        "제공된 데이터(가격, 등락률, 체결강도, 호가잔량, 뉴스, 공시)를 바탕으로 " +
-        "지금 상황에 대한 객관적인 관찰과 주의할 점을 정리하세요. " +
-        "'사세요', '파세요', '지금이 매수 타이밍입니다' 같은 직접적인 매매 추천이나 " +
-        "확정적인 가격 전망은 절대 하지 마세요. 데이터에 없는 내용은 추측하지 말고, " +
-        "확실하지 않으면 그렇다고 밝히세요. 한국어로, 4~6문장 정도로 간결하게 답하세요.",
-      messages: [{ role: "user", content: promptText }],
-    }),
+  const systemPrompt =
+    "당신은 한국 주식시장 데이터를 요약/설명하는 보조 도구입니다. " +
+    "제공된 데이터(가격, 등락률, 체결강도, 호가잔량, 뉴스, 공시)를 바탕으로 " +
+    "지금 상황에 대한 객관적인 관찰과 주의할 점을 정리하세요. " +
+    "'사세요', '파세요', '지금이 매수 타이밍입니다' 같은 직접적인 매매 추천이나 " +
+    "확정적인 가격 전망은 절대 하지 마세요. 데이터에 없는 내용은 추측하지 말고, " +
+    "확실하지 않으면 그렇다고 밝히세요. 한국어로, 4~6문장 정도로 간결하게 답하세요.";
+
+  // Cloudflare Workers AI 무료 티어 (하루 1만 뉴런) - Llama 3.1 8B
+  const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: promptText },
+    ],
+    max_tokens: 600,
   });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(`Claude API 실패: ${JSON.stringify(data)}`);
+  const text = result && (result.response || result.result || result.text);
+  if (!text) {
+    throw new Error(`Workers AI 응답 이상: ${JSON.stringify(result)}`);
   }
-  const textBlock = (data.content || []).find((b) => b.type === "text");
-  return textBlock ? textBlock.text : "(응답 없음)";
+  return text;
 }
 
 async function naverNewsSearch(env, query) {

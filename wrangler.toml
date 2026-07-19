@@ -21,6 +21,9 @@ new_sqlite_classes = ["PriceStreamDO"]
 tag = "v2-remove-realtime-ws"
 deleted_classes = ["PriceStreamDO"]
 
+[ai]
+binding = "AI"
+
 [vars]
 # 민감하지 않은 값만 여기 둠. "true" = 모의투자, "false" = 실전투자
 KIWOOM_MOCK = "true"
