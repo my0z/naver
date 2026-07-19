@@ -1660,12 +1660,15 @@ async function askStockExpert(env, promptText) {
     throw new Error("AI 바인딩이 설정되지 않았습니다. wrangler.toml에 [ai] binding=\"AI\" 필요.");
   }
   const systemPrompt =
-    "당신은 한국 주식시장 데이터를 요약/설명하는 보조 도구입니다. " +
-    "제공된 데이터(가격, 등락률, 체결강도, 호가잔량, 뉴스, 공시)를 바탕으로 " +
-    "지금 상황에서 눈여겨볼 점과 주의할 리스크만 정리하세요. " +
+    "당신은 한국 주식시장 데이터를 해석하는 보조 도구입니다. " +
+    "주어진 항목(가격, 등락률, 체결강도, 호가잔량, 뉴스, 공시)을 그대로 다시 나열하지 마세요 — " +
+    "이미 사용자가 화면에서 다 보고 있는 정보입니다. 대신 항목들을 서로 연결지어, " +
+    "지금 뭐가 특이하거나 앞뒤가 안 맞는지, 어떤 리스크 신호가 있는지를 해석해서 말하세요. " +
+    "예: 뉴스/공시 내용이 오늘 상승과 시점상 관련 있어 보이는지, 체결강도와 호가잔량이 같은 " +
+    "방향인지 엇갈리는지, 이런 상승 후 보통 어떤 리스크가 따르는지. " +
+    "연결점이 실제로 없으면 억지로 만들지 말고 '특별한 연관성 확인 안 됨'이라고 하세요. " +
     "'사세요', '파세요', '지금이 매수 타이밍입니다' 같은 직접적인 매매 추천이나 " +
-    "확정적인 가격 전망은 절대 하지 마세요. 데이터에 없는 내용은 추측하지 말고, " +
-    "확실하지 않으면 그렇다고 밝히세요. " +
+    "확정적인 가격 전망은 절대 하지 마세요. " +
     "인사말, 서론, '알겠습니다' 같은 도입부나 마무리 멘트 없이 바로 본론만 말하세요. " +
     "불릿 포인트(-) 3~5개로, 각 항목은 한 문장 이내로 짧게. 전체 300자 이내로 답하세요.";
 
@@ -2187,21 +2190,38 @@ self.addEventListener('fetch', (e) => {
           if (quote) {
             lines.push(`현재가: ${quote.price}원, 등락률: ${quote.rate}%`);
             lines.push(`오늘 시가: ${quote.open}, 고가: ${quote.high}, 저가: ${quote.low}, 거래량: ${quote.volume}`);
+            if (quote.high) {
+              const gapFromHigh = (((quote.price - quote.high) / quote.high) * 100).toFixed(2);
+              lines.push(`오늘 고점 대비: ${gapFromHigh}% (${gapFromHigh < -3 ? "고점에서 꽤 밀림" : gapFromHigh < 0 ? "고점 대비 소폭 하락" : "고점 유지 중"})`);
+            }
           }
-          if (body.cntrStr) lines.push(`체결강도: ${body.cntrStr}`);
-          if (body.buyReq && body.selReq) lines.push(`매수잔량: ${body.buyReq}, 매도잔량: ${body.selReq}`);
+          if (body.cntrStr) {
+            lines.push(`체결강도: ${body.cntrStr} (${body.cntrStr >= 105 ? "매수세 우위" : body.cntrStr < 95 ? "매도세 우위" : "중립"})`);
+          }
+          if (body.buyReq && body.selReq) {
+            lines.push(`매수잔량: ${body.buyReq}, 매도잔량: ${body.selReq} (${body.buyReq > body.selReq ? "매수 우위" : "매도 우위"})`);
+          }
           if (body.signalChecks && body.signalChecks.length) {
             lines.push(`충족된 기술적 조건: ${body.signalChecks.join(", ")}`);
           }
           if (newsItems.length) {
             lines.push("최근 뉴스:");
             newsItems.forEach((n) => lines.push(`- ${n.title}: ${n.description}`));
+          } else {
+            lines.push("최근 뉴스: 검색된 것 없음");
           }
           if (disclosures.length) {
             lines.push("최근 30일 공시:");
             disclosures.forEach((d) => lines.push(`- ${d.date} ${d.title}`));
+          } else {
+            lines.push("최근 30일 공시: 없음");
           }
-          lines.push("위 데이터를 바탕으로 지금 상황을 요약하고, 눈여겨볼 만한 리스크나 특이사항이 있으면 짚어주세요.");
+          lines.push(
+            "위 항목을 단순 나열하지 말고 서로 연결지어 해석하세요. 예: 뉴스/공시 내용이 오늘 등락률과 " +
+            "시점상 관련 있어 보이는지, 체결강도와 호가잔량이 같은 방향을 가리키는지 엇갈리는지, " +
+            "고점 대비 낙폭이 신호들과 앞뒤가 맞는지. 실제로 확인되는 연결점이 없으면 " +
+            "'특별한 연관성 확인 안 됨'이라고 명시하세요."
+          );
 
           const analysis = await askStockExpert(env, lines.join("\n"));
           return Response.json({ ok: true, analysis });
