@@ -418,7 +418,7 @@ function renderDashboard() {
   <div id="goldenWindowBanner" style="display:none;"></div>
 
   <div class="board">
-    <h2>⭐ 관심종목 <span class="intervalTag">(추가 시점 100만원 매수 가정)</span></h2>
+    <h2>⭐ 관심종목 <span class="intervalTag">(100만원 매수 가정, 수수료·세금 반영)</span></h2>
     <table id="watchlist">
       <thead><tr><th>종목</th><th>현재가</th><th>진입가</th><th>수익률</th><th></th></tr></thead>
       <tbody><tr><td class="empty">별표 눌러서 종목을 추가해보세요</td></tr></tbody>
@@ -435,7 +435,7 @@ function renderDashboard() {
 
   <div class="board">
     <div class="boardHeadRow">
-      <h2>📒 내 매매 기록</h2>
+      <h2>📒 내 매매 기록 <span class="intervalTag">(수수료·세금 반영)</span></h2>
       <button id="tradeLogAddBtn" class="sortBtn">기록 추가</button>
     </div>
     <div id="tradeStatsBar" class="sub" style="margin:0 0 8px;">기록 없음</div>
@@ -1304,6 +1304,25 @@ document.getElementById('reloadBtn').addEventListener('click', (e) => {
 // ---------- 관심종목(즐겨찾기) ----------
 let watchlistCodes = new Set();
 
+// 실질 수익률 계산: 정수 주식 매수, 매수/매도 수수료 각 0.015%, 매도 시 증권거래세 0.20%(2026년 기준, 코스피/코스닥 동일)
+const KIWOOM_FEE_RATE = 0.00015;
+const SELL_TAX_RATE = 0.0020;
+
+function computeRealisticPnl(entryPrice, currentPrice, budget) {
+  const qty = Math.floor(budget / entryPrice); // 소수점 주식 매수 불가능
+  if (qty <= 0) return null;
+  const investedAmount = qty * entryPrice;
+  const buyFee = investedAmount * KIWOOM_FEE_RATE;
+  const currentValue = qty * currentPrice;
+  const sellFee = currentValue * KIWOOM_FEE_RATE;
+  const sellTax = currentValue * SELL_TAX_RATE;
+  const netProceeds = currentValue - sellFee - sellTax;
+  const totalCost = investedAmount + buyFee;
+  const netPnlAmount = Math.round(netProceeds - totalCost);
+  const netPnlPct = (netPnlAmount / totalCost) * 100;
+  return { qty, investedAmount, netPnlAmount, netPnlPct };
+}
+
 function loadWatchlist() {
   fetch('/api/watchlist')
     .then(res => res.json())
@@ -1315,24 +1334,23 @@ function loadWatchlist() {
         const live = byCodeMap[w.code];
         const currentPrice = live ? live.price : null;
         const entryPrice = w.entry_price || 0;
-        let pnlPct = null, pnlAmount = null;
+        let pnl = null;
         if (currentPrice !== null && entryPrice > 0) {
-          pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
-          pnlAmount = Math.round(1000000 * (currentPrice / entryPrice)) - 1000000;
+          pnl = computeRealisticPnl(entryPrice, currentPrice, 1000000);
         }
         return {
           code: w.code, name: w.name,
           price: currentPrice, rate: live ? live.rate : null,
-          entryPrice, pnlPct, pnlAmount,
+          entryPrice, pnl,
         };
       });
       patchTable(tbody, rows, r => [
         r.name,
         r.price !== null ? fmt(r.price) : '-',
         r.entryPrice ? fmt(r.entryPrice) + '원' : '-',
-        r.pnlPct !== null
-          ? '<span class="' + (r.pnlPct >= 0 ? 'pnlPositive' : 'pnlNegative') + '">' +
-            (r.pnlPct >= 0 ? '+' : '') + r.pnlPct.toFixed(2) + '% (' + (r.pnlAmount >= 0 ? '+' : '') + fmt(r.pnlAmount) + '원)</span>'
+        r.pnl
+          ? '<span class="' + (r.pnl.netPnlPct >= 0 ? 'pnlPositive' : 'pnlNegative') + '">' +
+            (r.pnl.netPnlPct >= 0 ? '+' : '') + r.pnl.netPnlPct.toFixed(2) + '% (' + (r.pnl.netPnlAmount >= 0 ? '+' : '') + fmt(r.pnl.netPnlAmount) + '원)</span>'
           : '<span class="empty">밴드 밖</span>',
         '<span class="tradeDelBtn" data-code="' + r.code + '">🗑️</span>',
       ], '별표 눌러서 종목을 추가해보세요', item => {
@@ -1392,7 +1410,7 @@ function loadTradeLog() {
       }
       tbody.innerHTML = data.trades.length
         ? data.trades.map(t => {
-            const pnl = (t.sell_price - t.buy_price) * t.qty;
+            const pnl = t.net_pnl;
             return '<tr>' +
               '<td>' + t.name + '</td>' +
               '<td>' + fmt(t.buy_price) + ' → ' + fmt(t.sell_price) + '</td>' +
@@ -1746,6 +1764,19 @@ async function fetchDartDisclosures(env, corpCode) {
 }
 
 // ---------- 주식 분석 에이전트 (Claude API) ----------
+// 실질 손익 계산: 매수/매도 수수료 각 0.015%, 매도 시 증권거래세 0.20% (2026년 기준)
+const KIWOOM_FEE_RATE = 0.00015;
+const SELL_TAX_RATE = 0.002;
+
+function computeTradePnl(buyPrice, sellPrice, qty) {
+  const investedAmount = buyPrice * qty;
+  const buyFee = investedAmount * KIWOOM_FEE_RATE;
+  const proceeds = sellPrice * qty;
+  const sellFee = proceeds * KIWOOM_FEE_RATE;
+  const sellTax = proceeds * SELL_TAX_RATE;
+  return Math.round(proceeds - sellFee - sellTax - (investedAmount + buyFee));
+}
+
 async function askStockExpert(env, promptText) {
   if (!env.AI) {
     throw new Error("AI 바인딩이 설정되지 않았습니다. wrangler.toml에 [ai] binding=\"AI\" 필요.");
@@ -2304,14 +2335,16 @@ self.addEventListener('fetch', (e) => {
           const res = await env.DB.prepare(
             `SELECT * FROM trade_log ORDER BY created_at DESC LIMIT 200`
           ).all();
-          const trades = res.results;
+          const trades = res.results.map((t) => ({
+            ...t,
+            net_pnl: computeTradePnl(t.buy_price, t.sell_price, t.qty),
+          }));
           const stats = trades.reduce(
             (acc, t) => {
-              const pnl = (t.sell_price - t.buy_price) * t.qty;
-              acc.totalPnl += pnl;
+              acc.totalPnl += t.net_pnl;
               acc.count += 1;
-              if (pnl > 0) acc.wins += 1;
-              else if (pnl < 0) acc.losses += 1;
+              if (t.net_pnl > 0) acc.wins += 1;
+              else if (t.net_pnl < 0) acc.losses += 1;
               return acc;
             },
             { totalPnl: 0, count: 0, wins: 0, losses: 0 }
