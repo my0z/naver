@@ -348,7 +348,6 @@ function renderDashboard() {
     padding:14px; margin-bottom:10px; border-radius:10px; border:none;
     font-size:15px; font-weight:600; text-decoration:none; cursor:pointer;
   }
-  .modalBtn.chart { background:#2a2a2a; color:#eee; }
   .modalBtn.price { background:#2a2a2a; color:#eee; }
   .modalBtn.risk { background:#2a2a2a; color:#ffa94d; }
   .riskGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; background:#151515; border-radius:10px; padding:10px 12px; font-size:12px; color:#999; margin-bottom:12px; }
@@ -356,8 +355,6 @@ function renderDashboard() {
   .riskGrid .stopLoss b { color:#4d9fff; }
   .riskGrid .takeProfit b { color:#ff6b6b; }
   .riskNote { font-size:10px; color:#666; margin-top:6px; grid-column:1 / -1; }
-  .modalBtn.buy { background:#ff6b6b; color:#111; }
-  .modalBtn.sell { background:#4d9fff; color:#111; }
   .modalBtn.cancel { background:transparent; color:#888; margin-bottom:0; padding:10px; }
   .streakBoard h2 { color:#ffd43b; }
   .streakBoard.streak5 h2 { color:#69db7c; }
@@ -1901,6 +1898,16 @@ async function debugFetch(env) {
   return out;
 }
 
+// ---------- 관리자 키 검증 (매수/매도/DART 동기화 보호) ----------
+// ADMIN_KEY 시크릿이 설정 안 돼있으면 무조건 거부 (fail closed)
+// 호출 방법: 헤더 X-Admin-Key: <키> 또는 쿼리스트링 ?key=<키>
+function checkAdminKey(request, url, env) {
+  if (!env.ADMIN_KEY) return false;
+  const headerKey = request.headers.get("X-Admin-Key");
+  const queryKey = url.searchParams.get("key");
+  return headerKey === env.ADMIN_KEY || queryKey === env.ADMIN_KEY;
+}
+
 // ---------- 엔트리포인트 ----------
 export default {
   async fetch(request, env) {
@@ -1951,6 +1958,9 @@ self.addEventListener('fetch', (e) => {
       }
 
       if (url.pathname === "/api/buy" && request.method === "POST") {
+        if (!checkAdminKey(request, url, env)) {
+          return Response.json({ ok: false, error: "인증 필요 (ADMIN_KEY)" }, { status: 401 });
+        }
         try {
           const { code } = await request.json();
           if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
@@ -1962,6 +1972,9 @@ self.addEventListener('fetch', (e) => {
       }
 
       if (url.pathname === "/api/sell" && request.method === "POST") {
+        if (!checkAdminKey(request, url, env)) {
+          return Response.json({ ok: false, error: "인증 필요 (ADMIN_KEY)" }, { status: 401 });
+        }
         try {
           const { code } = await request.json();
           if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
@@ -1973,6 +1986,9 @@ self.addEventListener('fetch', (e) => {
       }
 
       if (url.pathname === "/api/admin/sync-dart-codes") {
+        if (!checkAdminKey(request, url, env)) {
+          return Response.json({ ok: false, error: "인증 필요 (ADMIN_KEY)" }, { status: 401 });
+        }
         try {
           const count = await syncDartCorpCodes(env);
           return Response.json({ ok: true, synced: count });
