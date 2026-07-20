@@ -590,7 +590,10 @@ function openStockModal(item) {
   modalName.textContent = item.name;
   modalCodeBadge.textContent = '코드: ' + item.code + ' (복사됨)';
   modalPrice.textContent = fmt(item.price) + '원';
-  modalRate.textContent = '+' + Number(item.rate).toFixed(2) + '%';
+  const modalRateVal = Number(item.rate) || 0;
+  modalRate.textContent = (modalRateVal >= 0 ? '+' : '') + modalRateVal.toFixed(2) + '%';
+  modalRate.classList.toggle('up', modalRateVal >= 0);
+  modalRate.classList.toggle('down', modalRateVal < 0);
   renderOrderBook(item.buyReq, item.selReq);
   renderNewsLinks(item.name, item.code);
   periodRow.querySelectorAll('.periodBtn').forEach(b => b.classList.toggle('active', b.dataset.period === '1'));
@@ -1294,6 +1297,8 @@ async function load() {
   });
 
   renderAllTable();
+  watchlistLastKnownMap = {};
+  (data.watchlistLastKnown || []).forEach(r => { watchlistLastKnownMap[r.code] = r; });
   renderWatchlist(data.watchlist || []);
 }
 
@@ -1339,27 +1344,7 @@ function formatAddedDate(isoString) {
   return mm + '/' + dd + ' 추가';
 }
 
-// 밴드 밖(5~15% 벗어난) 관심종목용 시세 캐시 (모달과 별개로 관심종목 표 전용)
-const offBandQuoteCache = {}; // { code: { price, rate, fetchedAt } }
-const OFF_BAND_CACHE_MS = 8000; // 메인 갱신 주기(10초)보다 살짝 짧게
-
-function fetchOffBandQuote(code) {
-  const cached = offBandQuoteCache[code];
-  if (cached && Date.now() - cached.fetchedAt < OFF_BAND_CACHE_MS) return; // 최근에 이미 조회함
-  if (cached && cached.fetching) return; // 이미 요청 중
-  offBandQuoteCache[code] = { ...(cached || {}), fetching: true };
-  fetch('/api/quote?code=' + code)
-    .then(res => res.json())
-    .then(data => {
-      if (data.ok) {
-        offBandQuoteCache[code] = { price: data.price, rate: data.rate, fetchedAt: Date.now(), fetching: false };
-        renderWatchlist(watchlistItems); // 받아온 시세로 다시 그림
-      } else {
-        offBandQuoteCache[code] = { fetchedAt: Date.now(), fetching: false };
-      }
-    })
-    .catch(() => { offBandQuoteCache[code] = { fetchedAt: Date.now(), fetching: false }; });
-}
+let watchlistLastKnownMap = {}; // 밴드 밖 종목의 D1 마지막 저장 시세 (load()에서 채워짐)
 
 function renderWatchlist(items) {
   watchlistItems = items;
@@ -1367,17 +1352,9 @@ function renderWatchlist(items) {
   const tbody = document.querySelector('#watchlist tbody');
   const rows = items.map(w => {
     const live = byCodeMap[w.code];
-    let currentPrice = live ? live.price : null;
-    let currentRate = live ? live.rate : null;
-    if (currentPrice === null) {
-      const cached = offBandQuoteCache[w.code];
-      if (cached && cached.price) {
-        currentPrice = cached.price;
-        currentRate = cached.rate;
-      } else {
-        fetchOffBandQuote(w.code); // 캐시 없으면 백그라운드로 조회 시작 (완료되면 알아서 재렌더링)
-      }
-    }
+    const lastKnown = watchlistLastKnownMap[w.code];
+    const currentPrice = live ? live.price : (lastKnown ? lastKnown.price : null);
+    const currentRate = live ? live.rate : (lastKnown ? lastKnown.change_rate : null);
     const entryPrice = w.entry_price || 0;
     let pnl = null;
     if (currentPrice !== null && entryPrice > 0) {
@@ -1385,19 +1362,21 @@ function renderWatchlist(items) {
     }
     return {
       code: w.code, name: w.name,
-      price: currentPrice, rate: currentRate, volume: live ? live.volume : null,
+      price: currentPrice, rate: currentRate, volume: live ? live.volume : (lastKnown ? lastKnown.volume : null),
       entryPrice, pnl, addedAt: w.added_at,
     };
   });
   patchTable(tbody, rows, r => [
     r.name + (r.addedAt ? '<div class="addedDate">' + formatAddedDate(r.addedAt) + '</div>' : ''),
-    r.price !== null ? fmt(r.price) : '<span class="empty">조회중</span>',
-    r.rate !== null ? '<span class="up">+' + r.rate.toFixed(2) + '%</span>' : '<span class="empty">-</span>',
+    r.price !== null ? fmt(r.price) : '<span class="empty">시세 없음</span>',
+    r.rate !== null
+      ? '<span class="' + (r.rate >= 0 ? 'up' : 'down') + '">' + (r.rate >= 0 ? '+' : '') + r.rate.toFixed(2) + '%</span>'
+      : '<span class="empty">-</span>',
     r.entryPrice ? fmt(r.entryPrice) + '원' : '-',
     r.pnl
       ? '<span class="' + (r.pnl.netPnlPct >= 0 ? 'pnlPositive' : 'pnlNegative') + '">' +
         (r.pnl.netPnlPct >= 0 ? '+' : '') + r.pnl.netPnlPct.toFixed(2) + '% (' + (r.pnl.netPnlAmount >= 0 ? '+' : '') + fmt(r.pnl.netPnlAmount) + '원)</span>'
-      : '<span class="empty">조회중</span>',
+      : '<span class="empty">시세 없음</span>',
     '<span class="tradeDelBtn" data-code="' + r.code + '">🗑️</span>',
   ], '별표 눌러서 종목을 추가해보세요', item => {
     const live = byCodeMap[item.code];
@@ -2346,6 +2325,29 @@ self.addEventListener('fetch', (e) => {
           env.DB.prepare(`SELECT * FROM watchlist ORDER BY added_at DESC`).all(),
         ]);
         data.watchlist = watchlistRes.results;
+
+        // 밴드 밖(오늘 5~15% 목록에 없는) 관심종목은 D1에 저장된 가장 최근 시세로 대체
+        // (키움 API 재조회 없이, 이미 수집해둔 데이터만 사용)
+        const inBandCodes = new Set(data.latest.map((r) => r.code));
+        const offBandCodes = data.watchlist.map((w) => w.code).filter((c) => !inBandCodes.has(c));
+        if (offBandCodes.length > 0) {
+          const placeholders = offBandCodes.map(() => "?").join(",");
+          const lastKnownRes = await env.DB.prepare(
+            `SELECT s.code, s.price, s.change_rate, s.volume
+             FROM snapshots s
+             INNER JOIN (
+               SELECT code, MAX(captured_at) AS max_captured
+               FROM snapshots WHERE code IN (${placeholders})
+               GROUP BY code
+             ) m ON s.code = m.code AND s.captured_at = m.max_captured`
+          )
+            .bind(...offBandCodes)
+            .all();
+          data.watchlistLastKnown = lastKnownRes.results;
+        } else {
+          data.watchlistLastKnown = [];
+        }
+
         return Response.json(data);
       }
 
