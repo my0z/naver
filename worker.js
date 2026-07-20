@@ -1339,13 +1339,45 @@ function formatAddedDate(isoString) {
   return mm + '/' + dd + ' 추가';
 }
 
+// 밴드 밖(5~15% 벗어난) 관심종목용 시세 캐시 (모달과 별개로 관심종목 표 전용)
+const offBandQuoteCache = {}; // { code: { price, rate, fetchedAt } }
+const OFF_BAND_CACHE_MS = 8000; // 메인 갱신 주기(10초)보다 살짝 짧게
+
+function fetchOffBandQuote(code) {
+  const cached = offBandQuoteCache[code];
+  if (cached && Date.now() - cached.fetchedAt < OFF_BAND_CACHE_MS) return; // 최근에 이미 조회함
+  if (cached && cached.fetching) return; // 이미 요청 중
+  offBandQuoteCache[code] = { ...(cached || {}), fetching: true };
+  fetch('/api/quote?code=' + code)
+    .then(res => res.json())
+    .then(data => {
+      if (data.ok) {
+        offBandQuoteCache[code] = { price: data.price, rate: data.rate, fetchedAt: Date.now(), fetching: false };
+        renderWatchlist(watchlistItems); // 받아온 시세로 다시 그림
+      } else {
+        offBandQuoteCache[code] = { fetchedAt: Date.now(), fetching: false };
+      }
+    })
+    .catch(() => { offBandQuoteCache[code] = { fetchedAt: Date.now(), fetching: false }; });
+}
+
 function renderWatchlist(items) {
   watchlistItems = items;
   watchlistCodes = new Set(items.map(w => w.code));
   const tbody = document.querySelector('#watchlist tbody');
   const rows = items.map(w => {
     const live = byCodeMap[w.code];
-    const currentPrice = live ? live.price : null;
+    let currentPrice = live ? live.price : null;
+    let currentRate = live ? live.rate : null;
+    if (currentPrice === null) {
+      const cached = offBandQuoteCache[w.code];
+      if (cached && cached.price) {
+        currentPrice = cached.price;
+        currentRate = cached.rate;
+      } else {
+        fetchOffBandQuote(w.code); // 캐시 없으면 백그라운드로 조회 시작 (완료되면 알아서 재렌더링)
+      }
+    }
     const entryPrice = w.entry_price || 0;
     let pnl = null;
     if (currentPrice !== null && entryPrice > 0) {
@@ -1353,19 +1385,19 @@ function renderWatchlist(items) {
     }
     return {
       code: w.code, name: w.name,
-      price: currentPrice, rate: live ? live.rate : null, volume: live ? live.volume : null,
+      price: currentPrice, rate: currentRate, volume: live ? live.volume : null,
       entryPrice, pnl, addedAt: w.added_at,
     };
   });
   patchTable(tbody, rows, r => [
     r.name + (r.addedAt ? '<div class="addedDate">' + formatAddedDate(r.addedAt) + '</div>' : ''),
-    r.price !== null ? fmt(r.price) : '-',
-    r.rate !== null ? '<span class="up">+' + r.rate.toFixed(2) + '%</span>' : '<span class="empty">밴드 밖</span>',
+    r.price !== null ? fmt(r.price) : '<span class="empty">조회중</span>',
+    r.rate !== null ? '<span class="up">+' + r.rate.toFixed(2) + '%</span>' : '<span class="empty">-</span>',
     r.entryPrice ? fmt(r.entryPrice) + '원' : '-',
     r.pnl
       ? '<span class="' + (r.pnl.netPnlPct >= 0 ? 'pnlPositive' : 'pnlNegative') + '">' +
         (r.pnl.netPnlPct >= 0 ? '+' : '') + r.pnl.netPnlPct.toFixed(2) + '% (' + (r.pnl.netPnlAmount >= 0 ? '+' : '') + fmt(r.pnl.netPnlAmount) + '원)</span>'
-      : '<span class="empty">밴드 밖</span>',
+      : '<span class="empty">조회중</span>',
     '<span class="tradeDelBtn" data-code="' + r.code + '">🗑️</span>',
   ], '별표 눌러서 종목을 추가해보세요', item => {
     const live = byCodeMap[item.code];
