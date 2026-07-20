@@ -260,6 +260,10 @@ function renderDashboard() {
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { padding:6px 4px; text-align:right; border-bottom:1px solid #2a2a2a; }
   th:first-child, td:first-child { text-align:left; }
+  .scrollTable { max-height:220px; overflow-y:auto; }
+  .scrollTable table { width:100%; }
+  .scrollTable thead th { position:sticky; top:0; background:#1c1c1c; z-index:1; }
+  .topPicksBoard .scrollTable thead th { background:#1c1a0f; }
   .up { color:#ff6b6b; }
   .down { color:#4d9fff; }
   .delta { color:#ffd43b; }
@@ -433,18 +437,18 @@ function renderDashboard() {
 
   <div class="board">
     <h2>⭐ 관심종목 <span class="intervalTag">(100만원 매수 가정, 수수료·세금 반영)</span></h2>
-    <table id="watchlist">
+    <div class="scrollTable"><table id="watchlist">
       <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>진입가</th><th>수익률</th><th></th></tr></thead>
       <tbody><tr><td class="empty">별표 눌러서 종목을 추가해보세요</td></tr></tbody>
-    </table>
+    </table></div>
   </div>
 
   <div class="board topPicksBoard">
     <h2>🏆 오늘의 TOP 20</h2>
-    <table id="topPicks">
+    <div class="scrollTable"><table id="topPicks">
       <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래량</th><th>체결강도</th><th>점수</th></tr></thead>
       <tbody><tr><td class="empty">데이터 없음</td></tr></tbody>
-    </table>
+    </table></div>
   </div>
 
   <div class="board">
@@ -452,25 +456,25 @@ function renderDashboard() {
       <h2>🔍 지난 1주일 패턴 유사 종목</h2>
       <button id="patternScanBtn" class="sortBtn">스캔 시작</button>
     </div>
-    <table id="patternScan">
+    <div class="scrollTable"><table id="patternScan">
       <thead><tr><th>종목</th><th>유사한 날</th><th>유사도</th></tr></thead>
       <tbody><tr><td class="empty">스캔 시작 버튼을 눌러주세요</td></tr></tbody>
-    </table>
+    </table></div>
   </div>
 
   <div class="board streakBoard streak5">
     <h2>🚀 5연속 상승 종목 <span class="intervalTag">(2분간격)</span></h2>
-    <table id="streak5"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
+    <div class="scrollTable"><table id="streak5"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table></div>
   </div>
 
   <div class="board streakBoard">
     <h2>⚡ 3연속 상승 종목 <span class="intervalTag">(2분간격)</span></h2>
-    <table id="streak3"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
+    <div class="scrollTable"><table id="streak3"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table></div>
   </div>
 
   <div class="board">
     <h2>2분 전보다 더 오른 TOP5</h2>
-    <table id="top5"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table>
+    <div class="scrollTable"><table id="top5"><tbody><tr><td class="empty">데이터 없음</td></tr></tbody></table></div>
   </div>
 
   <div class="board">
@@ -485,10 +489,10 @@ function renderDashboard() {
         <button class="sortBtn" id="sortBySignal">신호점수순</button>
       </div>
     </div>
-    <table id="all">
+    <div class="scrollTable"><table id="all">
       <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래량</th><th>체결강도</th><th>신호</th></tr></thead>
       <tbody><tr><td class="empty">데이터 없음</td></tr></tbody>
-    </table>
+    </table></div>
   </div>
 
   <div id="modalOverlay">
