@@ -434,7 +434,7 @@ function renderDashboard() {
   <div class="board">
     <h2>⭐ 관심종목 <span class="intervalTag">(100만원 매수 가정, 수수료·세금 반영)</span></h2>
     <table id="watchlist">
-      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>진입가</th><th>수익률</th><th></th></tr></thead>
+      <thead><tr><th>종목</th><th>1분봉</th><th>현재가</th><th>등락률</th><th>진입가</th><th>수익률</th><th></th></tr></thead>
       <tbody><tr><td class="empty">별표 눌러서 종목을 추가해보세요</td></tr></tbody>
     </table>
   </div>
@@ -1314,6 +1314,54 @@ function formatAddedDate(isoString) {
 
 let watchlistLastKnownMap = {}; // 밴드 밖 종목의 D1 마지막 저장 시세 (load()에서 채워짐)
 
+// ---------- 관심종목 미니 캔들차트 (1분봉) ----------
+const miniCandleCache = {}; // { code: candles[] }
+let miniCandleQueueRunning = false;
+
+function queueMiniCandleFetches(codes) {
+  const toFetch = codes.filter(c => !miniCandleCache[c]);
+  if (!toFetch.length || miniCandleQueueRunning) return;
+  miniCandleQueueRunning = true;
+  let i = 0;
+  function next() {
+    if (i >= toFetch.length) { miniCandleQueueRunning = false; return; }
+    const code = toFetch[i++];
+    fetch('/api/mini-candles?code=' + code)
+      .then(res => res.json())
+      .then(data => {
+        miniCandleCache[code] = data.ok ? data.candles : [];
+        renderWatchlist(watchlistItems); // 하나 받아올 때마다 그 자리에서 다시 그림
+      })
+      .catch(() => { miniCandleCache[code] = []; })
+      .finally(() => setTimeout(next, 1100)); // 키움 TR 초당1건 제한 준수
+  }
+  next();
+}
+
+function renderMiniCandles(candles) {
+  if (!candles || candles.length < 2) return '<span class="empty">차트 로딩중</span>';
+  const w = 220, h = 70, pad = 2;
+  const highs = candles.map(c => c.high), lows = candles.map(c => c.low);
+  const min = Math.min(...lows), max = Math.max(...highs);
+  const range = (max - min) || 1;
+  const candleW = (w - pad * 2) / candles.length;
+  const bars = candles.map((c, i) => {
+    const x = pad + i * candleW;
+    const yOpen = h - pad - ((c.open - min) / range) * (h - pad * 2);
+    const yClose = h - pad - ((c.close - min) / range) * (h - pad * 2);
+    const yHigh = h - pad - ((c.high - min) / range) * (h - pad * 2);
+    const yLow = h - pad - ((c.low - min) / range) * (h - pad * 2);
+    const up = c.close >= c.open;
+    const color = up ? '#ff6b6b' : '#4d9fff';
+    const bodyTop = Math.min(yOpen, yClose);
+    const bodyH = Math.max(1, Math.abs(yClose - yOpen));
+    const cx = x + candleW / 2;
+    return '<line x1="' + cx + '" y1="' + yHigh.toFixed(1) + '" x2="' + cx + '" y2="' + yLow.toFixed(1) + '" stroke="' + color + '" stroke-width="1"/>' +
+      '<rect x="' + x.toFixed(1) + '" y="' + bodyTop.toFixed(1) + '" width="' + (candleW * 0.7).toFixed(1) + '" height="' + bodyH.toFixed(1) + '" fill="' + color + '"/>';
+  }).join('');
+  return '<svg width="100%" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' + bars + '</svg>';
+}
+
 function renderWatchlist(items) {
   watchlistItems = items;
   watchlistCodes = new Set(items.map(w => w.code));
@@ -1336,6 +1384,7 @@ function renderWatchlist(items) {
   });
   patchTable(tbody, rows, r => [
     r.name + (r.addedAt ? '<div class="addedDate">' + formatAddedDate(r.addedAt) + '</div>' : ''),
+    renderMiniCandles(miniCandleCache[r.code]),
     r.price !== null ? fmt(r.price) : '<span class="empty">시세 없음</span>',
     r.rate !== null
       ? '<span class="' + (r.rate >= 0 ? 'up' : 'down') + '">' + (r.rate >= 0 ? '+' : '') + r.rate.toFixed(2) + '%</span>'
@@ -1350,6 +1399,7 @@ function renderWatchlist(items) {
     const live = byCodeMap[item.code];
     openStockModal(live || { code: item.code, name: item.name, price: item.price || 0, rate: item.rate || 0, buyReq: 0, selReq: 0 });
   });
+  queueMiniCandleFetches(items.map(w => w.code));
   tbody.querySelectorAll('.tradeDelBtn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1513,6 +1563,12 @@ let mainRefreshTimer = setInterval(() => {
   if (document.hidden) return; // 백그라운드면 새로고침 스킵
   load();
 }, 10000); // 10초마다 화면 갱신 (D1만 읽어오는 거라 키움 제한과 무관, 저장 자체는 cron이 2분마다)
+
+setInterval(() => {
+  if (document.hidden) return;
+  Object.keys(miniCandleCache).forEach(k => delete miniCandleCache[k]); // 캐시 비워서 재조회 유도
+  queueMiniCandleFetches(watchlistItems.map(w => w.code));
+}, 60000); // 관심종목 미니 캔들차트는 1분마다 갱신 (키움 TR 제한 감안)
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) load(); // 화면 복귀 시 즉시 최신화
@@ -1964,6 +2020,27 @@ function parseKiwoomChart(json) {
     .reverse(); // 응답이 최신순이면 시간순으로 뒤집기
 }
 
+// 관심종목 미니 캔들차트용: OHLC 전체 보존
+function parseKiwoomChartOHLC(json) {
+  let rows = [];
+  for (const key of Object.keys(json)) {
+    if (Array.isArray(json[key])) {
+      rows = json[key];
+      break;
+    }
+  }
+  return rows
+    .map((row) => ({
+      open: abs(row.open_pric),
+      high: abs(row.high_pric),
+      low: abs(row.low_pric),
+      close: abs(row.cur_prc ?? row.close_pric),
+      time: row.cntr_tm || "",
+    }))
+    .filter((r) => r.close > 0 && r.high > 0 && r.low > 0)
+    .reverse();
+}
+
 // ---------- 오늘 vs 지난 1주일 장중 패턴 유사도 스캔 ----------
 function parseKiwoomMinuteHistory(json) {
   let rows = [];
@@ -2393,6 +2470,20 @@ self.addEventListener('fetch', (e) => {
             takeProfit: Math.round(quote.price + atr * 2),
             goldenCross,
           });
+        } catch (e) {
+          return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
+        }
+      }
+
+      if (url.pathname === "/api/mini-candles") {
+        try {
+          const code = url.searchParams.get("code");
+          if (!code) return Response.json({ ok: false, error: "code 누락" }, { status: 400 });
+          const token = await kiwoomIssueToken(env);
+          const raw = await kiwoomChart(env, token, code, "1");
+          const parsed = parseKiwoomChartOHLC(raw);
+          const candles = parsed.slice(-30); // 최근 30개 1분봉만 (미니차트라 이 정도면 충분)
+          return Response.json({ ok: true, candles });
         } catch (e) {
           return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
         }
