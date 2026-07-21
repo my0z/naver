@@ -358,6 +358,8 @@ function renderDashboard() {
   .pnlPositive { color:#ff6b6b; }
   .pnlNegative { color:#4d9fff; }
   .addedDate { font-size:10px; color:#666; font-weight:normal; }
+  .miniChartRow td { border-bottom:1px solid #2a2a2a; padding:0 4px 8px; }
+  .miniChartRow { background:transparent; }
   .modalBtn {
     display:block; width:100%; box-sizing:border-box; text-align:center;
     padding:14px; margin-bottom:10px; border-radius:10px; border:none;
@@ -434,7 +436,7 @@ function renderDashboard() {
   <div class="board">
     <h2>⭐ 관심종목 <span class="intervalTag">(100만원 매수 가정, 수수료·세금 반영)</span></h2>
     <table id="watchlist">
-      <thead><tr><th>종목</th><th>1분봉</th><th>현재가</th><th>등락률</th><th>진입가</th><th>수익률</th><th></th></tr></thead>
+      <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>진입가</th><th>수익률</th><th></th></tr></thead>
       <tbody><tr><td class="empty">별표 눌러서 종목을 추가해보세요</td></tr></tbody>
     </table>
   </div>
@@ -1382,23 +1384,42 @@ function renderWatchlist(items) {
       entryPrice, pnl, addedAt: w.added_at,
     };
   });
-  patchTable(tbody, rows, r => [
-    r.name + (r.addedAt ? '<div class="addedDate">' + formatAddedDate(r.addedAt) + '</div>' : ''),
-    renderMiniCandles(miniCandleCache[r.code]),
-    r.price !== null ? fmt(r.price) : '<span class="empty">시세 없음</span>',
-    r.rate !== null
-      ? '<span class="' + (r.rate >= 0 ? 'up' : 'down') + '">' + (r.rate >= 0 ? '+' : '') + r.rate.toFixed(2) + '%</span>'
-      : '<span class="empty">-</span>',
-    r.entryPrice ? fmt(r.entryPrice) + '원' : '-',
-    r.pnl
-      ? '<span class="' + (r.pnl.netPnlPct >= 0 ? 'pnlPositive' : 'pnlNegative') + '">' +
-        (r.pnl.netPnlPct >= 0 ? '+' : '') + r.pnl.netPnlPct.toFixed(2) + '% (' + (r.pnl.netPnlAmount >= 0 ? '+' : '') + fmt(r.pnl.netPnlAmount) + '원)</span>'
-      : '<span class="empty">시세 없음</span>',
-    '<span class="tradeDelBtn" data-code="' + r.code + '">🗑️</span>',
-  ], '별표 눌러서 종목을 추가해보세요', item => {
-    const live = byCodeMap[item.code];
-    openStockModal(live || { code: item.code, name: item.name, price: item.price || 0, rate: item.rate || 0, buyReq: 0, selReq: 0 });
-  });
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td class="empty">별표 눌러서 종목을 추가해보세요</td></tr>';
+  } else {
+    tbody.innerHTML = rows.map(r => {
+      const rateHtml = r.rate !== null
+        ? '<span class="' + (r.rate >= 0 ? 'up' : 'down') + '">' + (r.rate >= 0 ? '+' : '') + r.rate.toFixed(2) + '%</span>'
+        : '<span class="empty">-</span>';
+      const pnlHtml = r.pnl
+        ? '<span class="' + (r.pnl.netPnlPct >= 0 ? 'pnlPositive' : 'pnlNegative') + '">' +
+          (r.pnl.netPnlPct >= 0 ? '+' : '') + r.pnl.netPnlPct.toFixed(2) + '% (' + (r.pnl.netPnlAmount >= 0 ? '+' : '') + fmt(r.pnl.netPnlAmount) + '원)</span>'
+        : '<span class="empty">시세 없음</span>';
+      return (
+        '<tr class="clickable watchlistRow" data-code="' + r.code + '">' +
+          '<td>' + r.name + (r.addedAt ? '<div class="addedDate">' + formatAddedDate(r.addedAt) + '</div>' : '') + '</td>' +
+          '<td>' + (r.price !== null ? fmt(r.price) : '<span class="empty">시세 없음</span>') + '</td>' +
+          '<td>' + rateHtml + '</td>' +
+          '<td>' + (r.entryPrice ? fmt(r.entryPrice) + '원' : '-') + '</td>' +
+          '<td>' + pnlHtml + '</td>' +
+          '<td><span class="tradeDelBtn noRowClick" data-code="' + r.code + '">🗑️</span></td>' +
+        '</tr>' +
+        '<tr class="miniChartRow"><td colspan="6">' + renderMiniCandles(miniCandleCache[r.code]) + '</td></tr>'
+      );
+    }).join('');
+
+    tbody.querySelectorAll('tr.watchlistRow').forEach(tr => {
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('.noRowClick')) return;
+        const code = tr.dataset.code;
+        const item = watchlistItems.find(w => w.code === code);
+        const live = byCodeMap[code];
+        openStockModal(live || { code, name: item ? item.name : code, price: 0, rate: 0, buyReq: 0, selReq: 0 });
+      });
+    });
+  }
+
   queueMiniCandleFetches(items.map(w => w.code));
   tbody.querySelectorAll('.tradeDelBtn').forEach(btn => {
     btn.addEventListener('click', (e) => {
