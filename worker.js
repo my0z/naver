@@ -1341,7 +1341,7 @@ function queueMiniCandleFetches(codes) {
 }
 
 function renderMiniCandles(candles) {
-  if (!candles || candles.length < 2) return '<span class="empty">차트 로딩중</span>';
+  if (!candles || candles.length < 2) return '<span class="empty">차트 로딩중(오늘 09:00~)</span>';
   const w = 220, h = 70, pad = 2;
   const highs = candles.map(c => c.high), lows = candles.map(c => c.low);
   const min = Math.min(...lows), max = Math.max(...highs);
@@ -1361,7 +1361,11 @@ function renderMiniCandles(candles) {
     return '<line x1="' + cx + '" y1="' + yHigh.toFixed(1) + '" x2="' + cx + '" y2="' + yLow.toFixed(1) + '" stroke="' + color + '" stroke-width="1"/>' +
       '<rect x="' + x.toFixed(1) + '" y="' + bodyTop.toFixed(1) + '" width="' + (candleW * 0.7).toFixed(1) + '" height="' + bodyH.toFixed(1) + '" fill="' + color + '"/>';
   }).join('');
-  return '<svg width="100%" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' + bars + '</svg>';
+  const labelIdxs = pickLabelIndices(candles.length);
+  const timeLabelsHtml = '<div class="chartTimeLabels">' +
+    labelIdxs.map(idx => '<span>' + formatChartTime(candles[idx].time, '1') + '</span>').join('') +
+    '</div>';
+  return '<svg width="100%" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' + bars + '</svg>' + timeLabelsHtml;
 }
 
 function renderWatchlist(items) {
@@ -2503,7 +2507,9 @@ self.addEventListener('fetch', (e) => {
           const token = await kiwoomIssueToken(env);
           const raw = await kiwoomChart(env, token, code, "1");
           const parsed = parseKiwoomChartOHLC(raw);
-          const candles = parsed.slice(-30); // 최근 30개 1분봉만 (미니차트라 이 정도면 충분)
+          const todayStr = todayYYYYMMDD();
+          // 오늘자 09:00 이후 데이터만 (cntr_tm = YYYYMMDDHHMMSS)
+          const candles = parsed.filter((c) => c.time.slice(0, 8) === todayStr && c.time.slice(8, 12) >= "0900");
           return Response.json({ ok: true, candles });
         } catch (e) {
           return Response.json({ ok: false, error: String(e.message || e) }, { status: 500 });
