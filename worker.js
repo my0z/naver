@@ -1647,11 +1647,10 @@ let mainRefreshTimer = setInterval(() => {
 
 setInterval(() => {
   if (document.hidden) return;
-  Object.keys(miniCandleCache).forEach(k => delete miniCandleCache[k]); // 캐시 비워서 재조회 유도
   Object.keys(liveQuoteCache).forEach(k => delete liveQuoteCache[k]);
-  queueMiniCandleFetches(watchlistItems.map(w => w.code));
   queueLiveQuoteFetches(watchlistItems.map(w => w.code));
-}, 20000); // 관심종목 미니 캔들차트 + 실시간 시세는 20초마다 갱신 시도 (진행 중이면 자동 스킵되는 가드 있어 안전)
+  // 미니 캔들차트는 한 번 로딩되면 다시 그리지 않음 (miniCandleCache 안 비움)
+}, 20000); // 관심종목 실시간 시세는 20초마다 갱신 시도 (진행 중이면 자동 스킵되는 가드 있어 안전)
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) load(); // 화면 복귀 시 즉시 최신화
