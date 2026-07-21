@@ -1624,7 +1624,7 @@ setInterval(() => {
   Object.keys(liveQuoteCache).forEach(k => delete liveQuoteCache[k]);
   queueMiniCandleFetches(watchlistItems.map(w => w.code));
   queueLiveQuoteFetches(watchlistItems.map(w => w.code));
-}, 60000); // 관심종목 미니 캔들차트 + 실시간 시세는 1분마다 갱신 (키움 TR 제한 감안)
+}, 20000); // 관심종목 미니 캔들차트 + 실시간 시세는 20초마다 갱신 시도 (진행 중이면 자동 스킵되는 가드 있어 안전)
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) load(); // 화면 복귀 시 즉시 최신화
