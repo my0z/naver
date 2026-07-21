@@ -1379,8 +1379,8 @@ function updateWatchlistPriceCells(code) {
   if (!w) return;
   const liveQuote = liveQuoteCache[code];
   const live = byCodeMap[code];
-  const currentPrice = live ? live.price : (liveQuote ? liveQuote.price : null);
-  const currentRate = live ? live.rate : (liveQuote ? liveQuote.rate : null);
+  const currentPrice = liveQuote ? liveQuote.price : (live ? live.price : null);
+  const currentRate = liveQuote ? liveQuote.rate : (live ? live.rate : null);
   const entryPrice = w.entry_price || 0;
   const pnl = (currentPrice !== null && entryPrice > 0) ? computeRealisticPnl(entryPrice, currentPrice, 1000000) : null;
   const tds = tr.children;
@@ -1430,8 +1430,10 @@ function renderWatchlist(items) {
     const live = byCodeMap[w.code];
     const liveQuote = liveQuoteCache[w.code];
     const lastKnown = watchlistLastKnownMap[w.code];
-    const currentPrice = live ? live.price : (liveQuote ? liveQuote.price : (lastKnown ? lastKnown.price : null));
-    const currentRate = live ? live.rate : (liveQuote ? liveQuote.rate : (lastKnown ? lastKnown.change_rate : null));
+    // 관심종목은 전용 실시간 재조회(liveQuote)가 배치 데이터(live)보다 항상 정확도가 높음
+    // (배치 데이터는 오늘자 마지막 5~15% 스냅샷일 뿐이라, 그 이후 밴드를 벗어나며 크게 움직이면 낡은 값일 수 있음)
+    const currentPrice = liveQuote ? liveQuote.price : (live ? live.price : (lastKnown ? lastKnown.price : null));
+    const currentRate = liveQuote ? liveQuote.rate : (live ? live.rate : (lastKnown ? lastKnown.change_rate : null));
     const entryPrice = w.entry_price || 0;
     let pnl = null;
     if (currentPrice !== null && entryPrice > 0) {
