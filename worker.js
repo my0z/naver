@@ -113,7 +113,7 @@ function isMarketHoursKST(date) {
   const day = kst.getDay(); // 0=Sun
   if (day === 0 || day === 6) return false;
   const minutes = kst.getHours() * 60 + kst.getMinutes();
-  return minutes >= 9 * 60 + 1 && minutes <= 15 * 60 + 15; // 09:01 ~ 15:15
+  return minutes >= 9 * 60 + 1 && minutes <= 15 * 60 + 32; // 09:01 ~ 15:32 (15:30 장마감 종가까지 반영)
 }
 
 // ---------- Cron: 저장 ----------
