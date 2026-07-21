@@ -1372,6 +1372,29 @@ function queueLiveQuoteFetches(codes) {
   next();
 }
 
+// 주기적 갱신용: 캐시를 미리 비우지 않고, 새 값이 도착하는 즉시 그 자리에서 덮어씀
+// (미리 비우면 그 순간 화면이 잠깐 옛날 배치 데이터로 돌아갔다 다시 바뀌는 깜빡임이 생김)
+function refreshLiveQuotes(codes) {
+  if (liveQuoteQueueRunning || !codes.length) return;
+  liveQuoteQueueRunning = true;
+  let i = 0;
+  function next() {
+    if (i >= codes.length) { liveQuoteQueueRunning = false; return; }
+    const code = codes[i++];
+    fetch('/api/quote?code=' + code)
+      .then(res => res.json())
+      .then(data => {
+        if (data.ok) {
+          liveQuoteCache[code] = { price: data.price, rate: data.rate, fetchedAt: Date.now() };
+          updateWatchlistPriceCells(code);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setTimeout(next, 1100));
+  }
+  next();
+}
+
 function updateWatchlistPriceCells(code) {
   const tr = document.querySelector('#watchlist tr.watchlistRow[data-code="' + code + '"]');
   if (!tr) return;
@@ -1649,8 +1672,7 @@ let mainRefreshTimer = setInterval(() => {
 
 setInterval(() => {
   if (document.hidden) return;
-  Object.keys(liveQuoteCache).forEach(k => delete liveQuoteCache[k]);
-  queueLiveQuoteFetches(watchlistItems.map(w => w.code));
+  refreshLiveQuotes(watchlistItems.map(w => w.code)); // 캐시 안 지우고 도착하는 대로 덮어씀 (깜빡임 방지)
   // 미니 캔들차트는 한 번 로딩되면 다시 그리지 않음 (miniCandleCache 안 비움)
 }, 20000); // 관심종목 실시간 시세는 20초마다 갱신 시도 (진행 중이면 자동 스킵되는 가드 있어 안전)
 
