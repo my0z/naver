@@ -1340,6 +1340,33 @@ function queueMiniCandleFetches(codes) {
   next();
 }
 
+// 관심종목 실시간 시세 재조회 (D1 마지막 시세는 밴드를 벗어나면 갱신이 안 되는 문제가 있어서,
+// 관심종목만 60초 주기로 키움 현재가(ka10007)를 직접 조회해서 정확도 보완)
+const liveQuoteCache = {}; // { code: { price, rate, fetchedAt } }
+let liveQuoteQueueRunning = false;
+
+function queueLiveQuoteFetches(codes) {
+  const toFetch = codes.filter(c => !liveQuoteCache[c]);
+  if (liveQuoteQueueRunning || !toFetch.length) return;
+  liveQuoteQueueRunning = true;
+  let i = 0;
+  function next() {
+    if (i >= toFetch.length) { liveQuoteQueueRunning = false; return; }
+    const code = toFetch[i++];
+    fetch('/api/quote?code=' + code)
+      .then(res => res.json())
+      .then(data => {
+        if (data.ok) {
+          liveQuoteCache[code] = { price: data.price, rate: data.rate, fetchedAt: Date.now() };
+          renderWatchlist(watchlistItems); // 받아올 때마다 그 자리에서 다시 그림
+        }
+      })
+      .catch(() => {})
+      .finally(() => setTimeout(next, 1100)); // 키움 TR 초당1건 제한 준수
+  }
+  next();
+}
+
 function renderMiniCandles(candles) {
   if (!candles || candles.length < 2) return '<span class="empty">차트 로딩중(오늘 09:00~)</span>';
   const w = 220, h = 70, pad = 2;
@@ -1374,9 +1401,10 @@ function renderWatchlist(items) {
   const tbody = document.querySelector('#watchlist tbody');
   const rows = items.map(w => {
     const live = byCodeMap[w.code];
+    const liveQuote = liveQuoteCache[w.code];
     const lastKnown = watchlistLastKnownMap[w.code];
-    const currentPrice = live ? live.price : (lastKnown ? lastKnown.price : null);
-    const currentRate = live ? live.rate : (lastKnown ? lastKnown.change_rate : null);
+    const currentPrice = live ? live.price : (liveQuote ? liveQuote.price : (lastKnown ? lastKnown.price : null));
+    const currentRate = live ? live.rate : (liveQuote ? liveQuote.rate : (lastKnown ? lastKnown.change_rate : null));
     const entryPrice = w.entry_price || 0;
     let pnl = null;
     if (currentPrice !== null && entryPrice > 0) {
@@ -1425,6 +1453,7 @@ function renderWatchlist(items) {
   }
 
   queueMiniCandleFetches(items.map(w => w.code));
+  queueLiveQuoteFetches(items.map(w => w.code));
   tbody.querySelectorAll('.tradeDelBtn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1592,8 +1621,10 @@ let mainRefreshTimer = setInterval(() => {
 setInterval(() => {
   if (document.hidden) return;
   Object.keys(miniCandleCache).forEach(k => delete miniCandleCache[k]); // 캐시 비워서 재조회 유도
+  Object.keys(liveQuoteCache).forEach(k => delete liveQuoteCache[k]);
   queueMiniCandleFetches(watchlistItems.map(w => w.code));
-}, 60000); // 관심종목 미니 캔들차트는 1분마다 갱신 (키움 TR 제한 감안)
+  queueLiveQuoteFetches(watchlistItems.map(w => w.code));
+}, 60000); // 관심종목 미니 캔들차트 + 실시간 시세는 1분마다 갱신 (키움 TR 제한 감안)
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) load(); // 화면 복귀 시 즉시 최신화
