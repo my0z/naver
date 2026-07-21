@@ -1332,7 +1332,7 @@ function queueMiniCandleFetches(codes) {
       .then(res => res.json())
       .then(data => {
         miniCandleCache[code] = data.ok ? data.candles : [];
-        renderWatchlist(watchlistItems); // 하나 받아올 때마다 그 자리에서 다시 그림
+        updateMiniChartCell(code); // 이 종목 차트 셀만 갱신 (다른 행은 안 건드림)
       })
       .catch(() => { miniCandleCache[code] = []; })
       .finally(() => setTimeout(next, 1100)); // 키움 TR 초당1건 제한 준수
@@ -1340,8 +1340,13 @@ function queueMiniCandleFetches(codes) {
   next();
 }
 
+function updateMiniChartCell(code) {
+  const row = document.querySelector('#watchlist tr.miniChartRow[data-code="' + code + '"] td');
+  if (row) row.innerHTML = renderMiniCandles(miniCandleCache[code]);
+}
+
 // 관심종목 실시간 시세 재조회 (D1 마지막 시세는 밴드를 벗어나면 갱신이 안 되는 문제가 있어서,
-// 관심종목만 60초 주기로 키움 현재가(ka10007)를 직접 조회해서 정확도 보완)
+// 관심종목만 20초 주기로 키움 현재가(ka10007)를 직접 조회해서 정확도 보완)
 const liveQuoteCache = {}; // { code: { price, rate, fetchedAt } }
 let liveQuoteQueueRunning = false;
 
@@ -1358,13 +1363,35 @@ function queueLiveQuoteFetches(codes) {
       .then(data => {
         if (data.ok) {
           liveQuoteCache[code] = { price: data.price, rate: data.rate, fetchedAt: Date.now() };
-          renderWatchlist(watchlistItems); // 받아올 때마다 그 자리에서 다시 그림
+          updateWatchlistPriceCells(code); // 이 종목 가격/수익률 셀만 갱신
         }
       })
       .catch(() => {})
       .finally(() => setTimeout(next, 1100)); // 키움 TR 초당1건 제한 준수
   }
   next();
+}
+
+function updateWatchlistPriceCells(code) {
+  const tr = document.querySelector('#watchlist tr.watchlistRow[data-code="' + code + '"]');
+  if (!tr) return;
+  const w = watchlistItems.find(x => x.code === code);
+  if (!w) return;
+  const liveQuote = liveQuoteCache[code];
+  const live = byCodeMap[code];
+  const currentPrice = live ? live.price : (liveQuote ? liveQuote.price : null);
+  const currentRate = live ? live.rate : (liveQuote ? liveQuote.rate : null);
+  const entryPrice = w.entry_price || 0;
+  const pnl = (currentPrice !== null && entryPrice > 0) ? computeRealisticPnl(entryPrice, currentPrice, 1000000) : null;
+  const tds = tr.children;
+  tds[1].innerHTML = currentPrice !== null ? fmt(currentPrice) : '<span class="empty">시세 없음</span>';
+  tds[2].innerHTML = currentRate !== null
+    ? '<span class="' + (currentRate >= 0 ? 'up' : 'down') + '">' + (currentRate >= 0 ? '+' : '') + currentRate.toFixed(2) + '%</span>'
+    : '<span class="empty">-</span>';
+  tds[4].innerHTML = pnl
+    ? '<span class="' + (pnl.netPnlPct >= 0 ? 'pnlPositive' : 'pnlNegative') + '">' +
+      (pnl.netPnlPct >= 0 ? '+' : '') + pnl.netPnlPct.toFixed(2) + '% (' + (pnl.netPnlAmount >= 0 ? '+' : '') + fmt(pnl.netPnlAmount) + '원)</span>'
+    : '<span class="empty">시세 없음</span>';
 }
 
 function renderMiniCandles(candles) {
@@ -1437,7 +1464,7 @@ function renderWatchlist(items) {
           '<td>' + pnlHtml + '</td>' +
           '<td><span class="tradeDelBtn noRowClick" data-code="' + r.code + '">🗑️</span></td>' +
         '</tr>' +
-        '<tr class="miniChartRow"><td colspan="6">' + renderMiniCandles(miniCandleCache[r.code]) + '</td></tr>'
+        '<tr class="miniChartRow" data-code="' + r.code + '"><td colspan="6">' + renderMiniCandles(miniCandleCache[r.code]) + '</td></tr>'
       );
     }).join('');
 
